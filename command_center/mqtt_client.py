@@ -20,7 +20,7 @@ class CommandCenterMQTT:
         # Subscribe to command results
         client.subscribe("iot/devices/+/results")
 
-    def on_message(self, client, userdaa, msg):
+    def on_message(self, client, userdata, msg):  # Fixed parameter name from 'userdaa' to 'userdata'
         """Callback when message is received"""
         print(f"Command center received message on topic {msg.topic}")
 
@@ -45,7 +45,7 @@ class CommandCenterMQTT:
                     "type": message_data.get("type", "unknown"),
                     "last_update": time.time()
                 }
-                print(f"Updated status for device {device_id}: {message_data.get("status")}")
+                print(f"Updated status for device {device_id}: {message_data.get('status')}")
             elif message_type == "results":
                 # Process command result
                 command = message_data.get("command")
@@ -58,7 +58,7 @@ class CommandCenterMQTT:
             print(f"Error processing message: {str(e)}")
 
     def connect(self):
-        """Conenct to the MQTT Broker"""
+        """Connect to the MQTT Broker"""
         print("Command center connecting to MQTT broker ...")
 
         # Create MQTT client

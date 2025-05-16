@@ -84,7 +84,7 @@
                     </div>
                     
                     <div class="command-form">
-                        <select id="command-{{ device_id }}">
+                        <select id="command-{{ device_id }}" class="command-select">
                             <option value="read_temperature">Read Temperature</option>
                             <option value="activate">Activate</option>
                             <option value="deactivate">Deactivate</option>
@@ -110,15 +110,22 @@
     <script>
         // Handle showing/hiding custom command input
         document.addEventListener('DOMContentLoaded', function() {
-            {% for device_id, info in devices.items() %}
-                document.getElementById('command-{{ device_id }}').addEventListener('change', function() {
+            // Get all command select elements
+            const commandSelects = document.querySelectorAll('.command-select');
+            
+            // Add event listeners to each select
+            commandSelects.forEach(function(select) {
+                select.addEventListener('change', function() {
+                    const deviceId = this.id.split('-')[1];
+                    const customCommandInput = document.getElementById('custom-command-' + deviceId);
+                    
                     if (this.value === 'custom') {
-                        document.getElementById('custom-command-{{ device_id }}').style.display = 'inline-block';
+                        customCommandInput.style.display = 'inline-block';
                     } else {
-                        document.getElementById('custom-command-{{ device_id }}').style.display = 'none';
+                        customCommandInput.style.display = 'none';
                     }
                 });
-            {% endfor %}
+            });
         });
         
         // Function to send command to device
@@ -172,9 +179,13 @@
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'success') {
-                    const devices = data.devices;
-                    // We could update the UI with the latest device list here
+                    // Reload the page to update the device list
+                    // For a more elegant solution, we could dynamically update the UI
+                    location.reload();
                 }
+            })
+            .catch(error => {
+                console.error('Error refreshing devices:', error);
             });
         }
         
