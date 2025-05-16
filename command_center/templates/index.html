@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>IoT Command Center</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            padding: 0;
+        }
+        h1 {
+            color: #333;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .status.connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status.disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Secure IoT Command Center</h1>
+    
+    <div class="status {% if mqtt_connected %}connected{% else %}disconnected{% endif %}">
+        MQTT Status: {% if mqtt_connected %}Connected{% else %}Disconnected{% endif %}
+    </div>
+    
+    <p>Welcome to the Secure IoT Command Center. Use this interface to securely control your IoT devices.</p>
+    
+    <a href="/control" class="btn">Go to Device Control</a>
+</body>
+</html>

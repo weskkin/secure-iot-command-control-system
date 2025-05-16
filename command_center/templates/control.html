@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Device Control - IoT Command Center</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            padding: 0;
+        }
+        h1, h2 {
+            color: #333;
+        }
+        .device {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+        .device-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .status-badge {
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 14px;
+        }
+        .status-online {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status-offline {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .command-form {
+            margin-top: 10px;
+        }
+        select, input[type="text"], button {
+            padding: 8px;
+            margin-right: 5px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            border-radius: 3px;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+        .result.success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .result.error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .no-devices {
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <h1>Device Control</h1>
+    
+    <div id="device-list">
+        {% if devices %}
+            {% for device_id, info in devices.items() %}
+                <div class="device" id="device-{{ device_id }}">
+                    <div class="device-header">
+                        <h2>{{ device_id }} ({{ info.type }})</h2>
+                        <span class="status-badge status-{{ info.status }}">{{ info.status }}</span>
+                    </div>
+                    
+                    <div class="command-form">
+                        <select id="command-{{ device_id }}">
+                            <option value="read_temperature">Read Temperature</option>
+                            <option value="activate">Activate</option>
+                            <option value="deactivate">Deactivate</option>
+                            <option value="restart">Restart</option>
+                            <option value="custom">Custom Command...</option>
+                        </select>
+                        <input type="text" id="custom-command-{{ device_id }}" placeholder="Custom command" style="display: none;">
+                        <button onclick="sendCommand('{{ device_id }}')">Send Command</button>
+                    </div>
+                    
+                    <div class="result" id="result-{{ device_id }}"></div>
+                </div>
+            {% endfor %}
+        {% else %}
+            <div class="no-devices">
+                <p>No devices connected. Please start a device simulator.</p>
+            </div>
+        {% endif %}
+    </div>
+    
+    <a href="/">Back to Home</a>
+    
+    <script>
+        // Handle showing/hiding custom command input
+        document.addEventListener('DOMContentLoaded', function() {
+            {% for device_id, info in devices.items() %}
+                document.getElementById('command-{{ device_id }}').addEventListener('change', function() {
+                    if (this.value === 'custom') {
+                        document.getElementById('custom-command-{{ device_id }}').style.display = 'inline-block';
+                    } else {
+                        document.getElementById('custom-command-{{ device_id }}').style.display = 'none';
+                    }
+                });
+            {% endfor %}
+        });
+        
+        // Function to send command to device
+        function sendCommand(deviceId) {
+            const commandSelect = document.getElementById('command-' + deviceId);
+            const customCommandInput = document.getElementById('custom-command-' + deviceId);
+            const resultDiv = document.getElementById('result-' + deviceId);
+            
+            let command = commandSelect.value;
+            if (command === 'custom') {
+                command = customCommandInput.value;
+                if (!command) {
+                    resultDiv.textContent = 'Please enter a custom command';
+                    resultDiv.className = 'result error';
+                    resultDiv.style.display = 'block';
+                    return;
+                }
+            }
+            
+            // Create form data for the request
+            const formData = new FormData();
+            formData.append('device_id', deviceId);
+            formData.append('command', command);
+            
+            // Send the command via AJAX
+            fetch('/api/send_command', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                resultDiv.textContent = data.message;
+                resultDiv.className = 'result ' + data.status;
+                resultDiv.style.display = 'block';
+                
+                // Hide the result after 5 seconds
+                setTimeout(() => {
+                    resultDiv.style.display = 'none';
+                }, 5000);
+            })
+            .catch(error => {
+                resultDiv.textContent = 'Error: ' + error.message;
+                resultDiv.className = 'result error';
+                resultDiv.style.display = 'block';
+            });
+        }
+        
+        // Function to refresh device list
+        function refreshDevices() {
+            fetch('/api/devices')
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    const devices = data.devices;
+                    // We could update the UI with the latest device list here
+                }
+            });
+        }
+        
+        // Refresh devices every 10 seconds
+        setInterval(refreshDevices, 10000);
+    </script>
+</body>
+</html>
