@@ -2,6 +2,8 @@ import time
 import random
 import paho.mqtt.client as mqtt 
 import json
+import ssl
+import os
 
 class IoTDevice:
     def __init__(self, device_id, device_type):
@@ -9,28 +11,60 @@ class IoTDevice:
         self.device_type = device_type
         self.status = 'offline'
         self.mqtt_client = None # Placeholder for MQTT client instance
-        print(f"Device {device_id} ({device_type}) initialized  ")
+        self.connected = False
 
-    def on_connect(self, client, userdata, flags, rc):
+        # TLS certificate paths
+        self.ca_cert = "/home/weskin/Desktop/secure-iot-command-control-system/certificates/ca/certs/ca.cert.pem"
+        self.device_cert = "/home/weskin/Desktop/secure-iot-command-control-system/certificates/ca/intermediate/certs/device_001-chain.cert.pem" # if doesnt work create a certificate chain of device + intermediate and put it here
+        self.device_key = "/home/weskin/Desktop/secure-iot-command-control-system/certificates/ca/intermediate/private/device_001.key.pem"
+
+        # Verify certificate files exist
+        self._verify_certificates()
+
+        print(f"Secure Device {device_id} ({device_type}) initialized  ")
+
+    def _verify_certificates(self):
+        """Verify that all required certificate files exist"""
+
+        cert_files = [
+            (self.ca_cert, "CA Certificate"),
+            (self.device_cert, "Device Certificate"),
+            (self.device_key, "Device Private Key")
+        ]
+
+        for cert_path, cert_name in cert_files:
+            if not os.path.exists(cert_path):
+                raise FileNotFoundError(f"{cert_name} not found at: {cert_path}")
+            
+        print("All device certificate files found")        
+
+    def on_connect(self, client, userdata, flags, rc, properties):
         """Callback when connected to MQTT broker"""
-        print(f"Device {self.device_id} connected to MQTT broker with result code {rc}") #Connection status
 
-        # Subscribe to a topic to receive commands (e.g., "iot/devices/dev001/commands")
-        command_topic = f"iot/devices/{self.device_id}/commands"
-        client.subscribe(command_topic) # Subscribe to the topic
-        print(f"Subscribed to {command_topic}") #Confirmation
+        if rc == 0:
+            print(f"Device {self.device_id} connected to MQTT broker securely (TLS)") #Connection status
+            self.connected = True
+            
+            # Subscribe to a topic to receive commands (e.g., "iot/devices/dev001/commands")
+            command_topic = f"iot/devices/{self.device_id}/commands"
+            client.subscribe(command_topic) # Subscribe to the topic
+            print(f"Subscribed to {command_topic}") #Confirmation
 
-        self.status = "online" # Update device status
+            self.status = "online" # Update device status
 
-        # Publish a JSON status message to the broker (e.g., "iot/devices/dev001/status")
-        status_msg = json.dumps({
-            "device_id": self.device_id,
-            "type": self.device_type,
-            "status": self.status,
-            "timestamp": time.time() # Current Unix timestamp
-        })
+            # Publish a JSON status message to the broker (e.g., "iot/devices/dev001/status")
+            status_msg = json.dumps({
+                "device_id": self.device_id,
+                "type": self.device_type,
+                "status": self.status,
+                "timestamp": time.time() # Current Unix timestamp
+            })
 
-        client.publish(f"iot/devices/{self.device_id}/status", status_msg) # Send message
+            client.publish(f"iot/devices/{self.device_id}/status", status_msg) # Send message
+            print(f"Published online status for device {self.device_id}")
+        else:
+            print(f"Device {self.device_id} failed to connect. Return code: {rc}")
+            self.connected = False        
 
     def on_message(self, client, userdata, msg):
         """Callback when message is received"""
@@ -59,27 +93,48 @@ class IoTDevice:
             })
 
             client.publish(f"iot/devices/{self.device_id}/results", result_msg) # Send result
+            print(f"Published command result for {command}")
         except json.JSONDecodeError: # Invalid JSON
             print(f"Received invalid JSON: {msg.payload.decode()}")
         except Exception as e: # Generic Errors
             print(f"Error processing message: {str(e)}")
     
     def connect(self):
-        """Connect to the control system"""
-        print(f"Device {self.device_id} connecting to MQTT broker ...")
+        """Connect to the MQTT broker with TLS"""
+        print(f"Device {self.device_id} connecting to secure MQTT broker ...")
 
-        # Create an MQTT client instance with a unique ID
-        client = mqtt.Client(client_id=f"device_{self.device_id}")
-        # Assign callback functions
-        client.on_connect = self.on_connect
-        client.on_message = self.on_message
+        try:
+            # Create an MQTT client instance with a unique ID
+            client = mqtt.Client(client_id=f"device_{self.device_id}", callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
 
-        # Connect to the broker running on localhost at port 1883 (default MQTT port)
-        client.connect("localhost", 1883, 60)
+            # Assign callback functions
+            client.on_connect = self.on_connect
+            client.on_message = self.on_message
 
-        self.mqtt_client = client # Store the client instance
-        
-        return client
+            # Configure TLS/SSL
+            print("Configuring TLS certificates...")
+            client.tls_set(
+                ca_certs=self.ca_cert,
+                certfile=self.device_cert,
+                keyfile=self.device_key,
+                cert_reqs=ssl.CERT_REQUIRED,
+                tls_version=ssl.PROTOCOL_TLSv1_2,
+                ciphers='DEFAULT@SECLEVEL=1'
+            )
+
+            # Set TLS options
+            client.tls_insecure_set(False)
+
+            # Connect to the broker running on localhost at port 8883
+            print("Connecting to broker on port 8883...")
+            client.connect("localhost", 8883, 60)
+
+            self.mqtt_client = client # Store the client instance
+            
+            return client
+        except Exception as e:
+            print(f"Error setting up TLS connection: {str(e)}")
+            return None
 
     def process_command(self, command):
         """Process a command from the command center"""
@@ -88,41 +143,61 @@ class IoTDevice:
         # Simulate processing time
         time.sleep(1)
 
-        # Simulate 90% success rate (random.random() returns 0.0-1.0)
-        success = random.random() > 0.1 #90% success rate
-
-        if success:
-            print(f"Device {self.device_id} successfully executed command: {command}")
-            return {"status": "success", "message": f"Command {command} executed"}
+        # Simulate different responses based on command type
+        if command == "read_temperature":
+            # Simulate temperature reading
+            temperature = round(random.uniform(18.0, 32.0), 1)
+            return {
+                "status": "success", 
+                "message": f"Temperature reading: {temperature}°C",
+                "data": {"temperature": temperature}
+            }
+        elif command == "activate":
+            return {"status": "success", "message": "Device activated successfully"}
+        elif command == "deactivate":
+            return {"status": "success", "message": "Device deactivated successfully"}
+        elif command == "restart":
+            return {"status": "success", "message": "Device restarted successfully"}
         else:
-            print(f"Device {self.device_id} failed to execute command: {command}")
-            return {"status": "error", "message": f"Command execution failed"}
+            # For unknown commands, simulate 90% success rate
+            success = random.random() > 0.1
+            if success:
+                return {"status": "success", "message": f"Command '{command}' executed successfully"}
+            else:
+                return {"status": "error", "message": f"Failed to execute command '{command}'"}
         
 
 #Simple test code
 if __name__ == "__main__":
-    # Create a test device
-    device = IoTDevice("dev001", "temperature_sensor")
 
-    # Connect to MQTT broker and get the client instance
-    client = device.connect()
+    try:
+        # Create a test device
+        device = IoTDevice("dev001", "temperature_sensor")
 
-    try: 
-        # Start an infinite MQTT loop to listen for messages
-        client.loop_forever() # Blocks here until interrupted
+        # Connect to MQTT broker and get the client instance
+        client = device.connect()
 
-    # Handle Ctrl+C (KeyboardInterrupt) for graceful shutdown
+        if client:
+            print("Starting device loop...")
+            # Start the MQTT loop
+            client.loop_forever()
+        else:
+            print("Failed to conenct to MQTT broker")
     except KeyboardInterrupt:
-        print("Shutting down device ...")
+        print(f"\nShutting down device {device.device_id}...")
 
-        # Publish "offline" status before disconnecting
-        status_msg = json.dumps({
-            "device_id": device.device_id,
-            "status": "offline",
-            "type": device.device_type,
-            "timestamp": time.time()
-        })
+        # Publish offline status before disconnecting
+        if hasattr(device, 'mqtt_client') and device.mqtt_client:
+            status_msg = json.dumps({
+                "device_id": device.device_id,
+                "status": "offline",
+                "type": device.device_type,
+                "timestamp": time.time()
+            })
 
-        client.publish(f"iot/devices/{device.device_id}/status", status_msg)
-
-        client.disconnect() # Disconnect from the broker
+            device.mqtt_client.publish(f"iot/devices/{device.device_id}/status", status_msg)
+            time.sleep(1)  # Give time for message to be sent
+            device.mqtt_client.disconnect()
+            
+    except Exception as e:
+        print(f"Error starting device: {str(e)}")
