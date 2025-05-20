@@ -154,6 +154,11 @@
             <a href="javascript:void(0)" onclick="refreshStatus()" style="background-color: #28a745;">
                 🔄 Refresh Status
             </a>
+            {% if current_user.is_authenticated %}
+                <a href="/logout">🚪 Logout</a>
+            {% else %}
+                <a href="/login">🔑 Login</a>
+            {% endif %}
         </div>
 
         <div class="refresh-note">

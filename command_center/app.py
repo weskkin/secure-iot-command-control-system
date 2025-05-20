@@ -5,10 +5,54 @@ import time
 import threading
 import paho.mqtt.client as mqtt
 import ssl
+from flask_login import (
+    LoginManager, 
+    UserMixin, 
+    login_user, 
+    logout_user, 
+    login_required, 
+    current_user
+)
+from werkzeug.security import generate_password_hash, check_password_hash
+import sqlite3
+
+# Initialize LoginManager
+login_manager = LoginManager()
+login_manager.login_view = 'login'
 
 # Create Flask Application
 app = Flask(__name__)
 app.secret_key = 'dev_key_change_this_later'  # We'll make this more secure later
+
+login_manager.init_app(app)
+
+# User model
+class User(UserMixin):
+    def __init__(self, id, username):
+        self.id = id
+        self.username = username
+
+# Database setup (SQLite for simplicity)
+def init_db():
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS users 
+                (id INTEGER PRIMARY KEY, 
+                 username TEXT UNIQUE, 
+                 password_hash TEXT)''')
+    conn.commit()
+    conn.close()
+
+init_db()  # Run once
+
+@login_manager.user_loader
+def load_user(user_id):
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+    c.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    user = c.fetchone()
+    conn.close()
+    return User(id=user[0], username=user[1]) if user else None
 
 class MQTTIntegratedApp:
     def __init__(self):
@@ -211,8 +255,54 @@ def index():
     return render_template('index.html', mqtt_connected=mqtt_app.get_connection_status())
 
 @app.route('/control')
+@login_required
 def control():
     return render_template('control.html', devices=mqtt_app.get_devices())
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        
+        conn = sqlite3.connect('users.db')
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE username = ?", (username,))
+        user = c.fetchone()
+        conn.close()
+        
+        if user and check_password_hash(user[2], password):
+            user_obj = User(id=user[0], username=user[1])
+            login_user(user_obj)
+            return redirect(url_for('control'))
+        else:
+            flash('Invalid credentials')
+    return render_template('login.html')
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = generate_password_hash(request.form['password'])
+        
+        try:
+            conn = sqlite3.connect('users.db')
+            c = conn.cursor()
+            c.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", 
+                     (username, password))
+            conn.commit()
+            conn.close()
+            flash('Registration successful!')
+            return redirect(url_for('login'))
+        except sqlite3.IntegrityError:
+            flash('Username already exists')
+    return render_template('register.html')
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('index'))
 
 @app.route('/api/send_command', methods=['POST'])
 def send_command():
