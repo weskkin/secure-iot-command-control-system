@@ -19,6 +19,11 @@ class IoTDevice:
         self.mqtt_client = None # Placeholder for MQTT client instance
         self.connected = False
 
+        self.allowed_commands = {
+            "temperature_sensor": ["read_temperature", "restart"],
+            "security_camera": ["activate", "deactivate", "restart", "status_check"]
+        }
+
         # TLS certificate paths
         self.ca_cert = "/home/weskin/Desktop/secure-iot-command-control-system/certificates/ca/certs/ca.cert.pem"
         self.device_cert = "/home/weskin/Desktop/secure-iot-command-control-system/certificates/ca/intermediate/certs/device_001-chain.cert.pem"
@@ -204,6 +209,9 @@ class IoTDevice:
 
         # Simulate processing time
         time.sleep(1)
+
+        if command not in self.allowed_commands.get(self.device_type, []):
+            return {"status": "error", "message": "Unauthorized command"}
 
         # Simulate different responses based on command type
         if command == "read_temperature":

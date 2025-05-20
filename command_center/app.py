@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, abort
 import os
 import json
 import time
@@ -22,6 +22,8 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.x509 import load_pem_x509_certificate
 from cryptography.exceptions import InvalidSignature
 import base64
+from functools import wraps 
+from datetime import datetime
 
 
 # Initialize LoginManager
@@ -48,18 +50,30 @@ login_manager.init_app(app)
 
 # User model
 class User(UserMixin):
-    def __init__(self, id, username):
+    def __init__(self, id, username, role="operator"):
         self.id = id
         self.username = username
+        self.role = role
 
 # Database setup (SQLite for simplicity)
+# Update all sqlite3.connect() calls to use absolute path
+DB_PATH = "/home/weskin/Desktop/secure-iot-command-control-system/command_center/users.db"
+
 def init_db():
-    conn = sqlite3.connect('users.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users 
                 (id INTEGER PRIMARY KEY, 
                  username TEXT UNIQUE, 
-                 password_hash TEXT)''')
+                 password_hash TEXT,
+                 role TEXT,
+                 last_login REAL)''')  # Added last_login column
+    
+    # Add admin with null last_login
+    admin_hash = generate_password_hash("secure_admin_password")
+    c.execute("INSERT OR IGNORE INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+             ("admin", admin_hash, "admin"))
+    
     conn.commit()
     conn.close()
 
@@ -67,12 +81,20 @@ init_db()  # Run once
 
 @login_manager.user_loader
 def load_user(user_id):
-    conn = sqlite3.connect('users.db')
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     c = conn.cursor()
     c.execute("SELECT * FROM users WHERE id = ?", (user_id,))
     user = c.fetchone()
     conn.close()
-    return User(id=user[0], username=user[1]) if user else None
+    return User(id=user[0], username=user[1], role=user[3]) if user else None
+
+def admin_required(func):
+    @wraps(func)
+    def decorated_view(*args, **kwargs):
+        if not current_user.is_authenticated or current_user.role != "admin":
+            abort(403)
+        return func(*args, **kwargs)
+    return decorated_view
 
 class MQTTIntegratedApp:
     def __init__(self):
@@ -80,6 +102,8 @@ class MQTTIntegratedApp:
         self.mqtt_connected = False
         self.devices = {}
         self.device_certs = {}  # Cache for device public keys
+        self.audit_logs = []
+        self.max_log_entries = 1000  # Keep last 1000 entries
         self.mqtt_client = None
         self.connection_lock = threading.Lock()
         
@@ -198,7 +222,7 @@ class MQTTIntegratedApp:
             with self.connection_lock:
                 self.mqtt_connected = False
 
-    def _on_disconnect(self, client, userdata, rc):
+    def _on_disconnect(self, client, userdata, rc, flags=None, properties=None):
         """Callback when disconnected from MQTT broker"""
         print("Disconnected from MQTT broker")
         with self.connection_lock:
@@ -207,8 +231,24 @@ class MQTTIntegratedApp:
     def _on_message(self, client, userdata, msg):
         """Callback when message is received"""
         print(f"Received message on topic {msg.topic}")
-        
+    
         try:
+
+            # Get TLS socket through client's low-level socket
+            sock = client._sock
+            if not isinstance(sock, ssl.SSLSocket):
+                print("Not an SSL connection")
+                return
+
+            # Get certificate subject
+            cert = sock.getpeercert()
+            subject = dict(x[0] for x in cert['subject'])
+            common_name = subject.get('commonName', 'unknown')
+
+            # Add debug prints HERE
+            print(f"Processing message from {common_name}")
+            print(f"Raw message content: {msg.payload[:50]}...")  # First 50 chars
+            
             # Parse message from JSON
             message_data = json.loads(msg.payload.decode())
             
@@ -249,13 +289,21 @@ class MQTTIntegratedApp:
                     result = message_data.get("result")
                     print(f"Received result for command {command} on device {device_id}: {result}")
         except InvalidSignature:
-            print(f"⚠️ Tampered message from {device_id}! Rejecting.")
+            log_msg = f"Tampered message from {device_id}! Rejecting."
+            print(f"⚠️ {log_msg}")
+            self.add_audit_log("SECURITY", log_msg, device_id)
         except KeyError as e:
-            print(f"Missing field in message: {str(e)}")                 
+            log_msg = f"Missing field in message: {str(e)}"
+            print(f"❌ {log_msg}")
+            self.add_audit_log("ERROR", log_msg, "MQTT")              
         except json.JSONDecodeError:
-            print(f"Received invalid JSON: {msg.payload.decode()}")
+            log_msg = f"Invalid JSON: {msg.payload.decode()}"
+            print(f"❌ {log_msg}")
+            self.add_audit_log("ERROR", log_msg, "MQTT")
         except Exception as e:
-            print(f"Error processing message: {str(e)}")
+            log_msg = f"Error processing message: {str(e)}"
+            print(f"🔥 {log_msg}")
+            self.add_audit_log("ERROR", log_msg, "SYSTEM")
 
     def send_command(self, device_id, command):
         """Send a command to a device"""
@@ -292,10 +340,12 @@ class MQTTIntegratedApp:
                 result = self.mqtt_client.publish(topic, json.dumps(command_msg))
             
             if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                self.add_audit_log("COMMAND", f"Sent {command} to {device_id}", "COMMAND_CENTER")
                 print(f"Sent command {command} to device {device_id}")
                 return True
             else:
                 print(f"Failed to send command. MQTT error code: {result.rc}")
+                self.add_audit_log("ERROR", f"Failed to send {command} to {device_id}", "COMMAND_CENTER")
                 return False
         except Exception as e:
             print(f"Error sending command: {str(e)}")
@@ -320,6 +370,19 @@ class MQTTIntegratedApp:
             
             self.devices = active_devices
             return self.devices.copy()
+
+    def add_audit_log(self, event_type, details, source):
+        """Add an entry to the audit log"""
+        log_entry = {
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "event_type": event_type,
+            "details": details,
+            "source": source
+        }
+        self.audit_logs.append(log_entry)
+        # Keep log size under limit
+        if len(self.audit_logs) > self.max_log_entries:
+            self.audit_logs.pop(0)
 
 # Create global instance
 mqtt_app = MQTTIntegratedApp()
@@ -347,10 +410,24 @@ def login():
         conn.close()
         
         if user and check_password_hash(user[2], password):
-            user_obj = User(id=user[0], username=user[1])
+            user_obj = User(id=user[0], username=user[1], role=user[3])
             login_user(user_obj)
+            
+            # Update last login time
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute("UPDATE users SET last_login = ? WHERE id = ?",
+                     (datetime.now().timestamp(), user[0]))
+            conn.commit()
+            conn.close()
+            
+            mqtt_app.add_audit_log("AUTH", f"Successful login from {request.remote_addr}", user[1])
             return redirect(url_for('control'))
         else:
+            mqtt_app.add_audit_log("AUTH_FAIL", 
+                f"Failed login attempt for {username} from {request.remote_addr}", 
+                "AUTH"
+            )
             flash('Invalid credentials')
     return render_template('login.html')
 
@@ -378,6 +455,32 @@ def register():
 def logout():
     logout_user()
     return redirect(url_for('index'))
+
+@app.route('/admin')
+@admin_required
+def admin_panel():
+    # Get active users (users logged in within last 15 minutes)
+    active_users = 0
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM users WHERE last_login > ?", 
+             (datetime.now().timestamp() - 900,))
+    active_users = c.fetchone()[0]
+    conn.close()
+
+    # Format timestamps for display
+    formatted_logs = []
+    for log in mqtt_app.audit_logs[-50:]:  # Last 50 entries
+        formatted = log.copy()
+        formatted["timestamp"] = datetime.strptime(
+            log["timestamp"], "%Y-%m-%d %H:%M:%S"
+        ).strftime("%H:%M:%S")  # Show only time
+        formatted_logs.append(formatted)
+    
+    return render_template('admin.html',
+                         devices=mqtt_app.get_devices(),
+                         active_users=active_users,
+                         logs=formatted_logs) 
 
 @app.route('/api/send_command', methods=['POST'])
 def send_command():

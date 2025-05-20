@@ -522,6 +522,17 @@
                 </div>
             `;
         }
+
+        function refreshDeviceList() {
+            fetch('/api/devices')
+                .then(response => response.json())
+                .then(data => {
+                    if(data.status === 'success') {
+                        // Update device grid here
+                        console.log('Devices:', data.devices);
+                    }
+                });
+        }
         
         // Cleanup on page unload
         window.addEventListener('beforeunload', function() {
@@ -529,6 +540,9 @@
                 clearInterval(refreshInterval);
             }
         });
+
+        // Refresh every 5 seconds
+        setInterval(refreshDeviceList, 5000);
     </script>
 </body>
 </html>
