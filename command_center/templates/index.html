@@ -203,6 +203,11 @@
                 const response = await fetch('/api/status');
                 const data = await response.json();
                 updateStatusDisplay(data.mqtt_connected, data.device_count);
+
+                // Device count update
+                document.getElementById('deviceCount').textContent = 
+                data.device_count + (data.device_count === 1 ? ' device' : ' devices');
+
             } catch (error) {
                 console.error('Error checking status:', error);
                 updateStatusDisplay(false, 0);

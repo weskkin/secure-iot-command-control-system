@@ -15,6 +15,8 @@ from flask_login import (
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 import sqlite3
+from flask_talisman import Talisman
+
 
 # Initialize LoginManager
 login_manager = LoginManager()
@@ -23,6 +25,18 @@ login_manager.login_view = 'login'
 # Create Flask Application
 app = Flask(__name__)
 app.secret_key = 'dev_key_change_this_later'  # We'll make this more secure later
+
+talisman = Talisman(
+    app,
+    force_https=True,
+    strict_transport_security=True,
+    session_cookie_secure=True,
+    content_security_policy={
+        'default-src': "'self'",
+        'style-src': ["'self'", "'unsafe-inline'"],
+        'script-src': ["'self'", "'unsafe-inline'"]
+    }
+)
 
 login_manager.init_app(app)
 
@@ -98,7 +112,11 @@ class MQTTIntegratedApp:
         
         try:
             # Create MQTT client with unique ID
-            client = mqtt.Client(client_id="flask_command_center")
+            client = mqtt.Client(client_id="flask_command_center", callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+            # For debugging
+            client.on_log = lambda client, userdata, level, buf: print("MQTT LOG:", buf)
+
+            # callbacks
             client.on_connect = self._on_connect
             client.on_message = self._on_message
             client.on_disconnect = self._on_disconnect
@@ -133,7 +151,7 @@ class MQTTIntegratedApp:
             with self.connection_lock:
                 self.mqtt_connected = False
 
-    def _on_connect(self, client, userdata, flags, rc):
+    def _on_connect(self, client, userdata, flags, rc, properties):
         """Callback when connected to MQTT broker"""
         if rc == 0:
             print("Flask app connected to MQTT broker securely")
@@ -333,7 +351,14 @@ def get_status():
 
 # Start the application
 if __name__ == '__main__':
+
+    ssl_context = (
+        '/home/weskin/Desktop/secure-iot-command-control-system/certificates/ca/intermediate/certs/flask-web-chain.cert.pem',  # Certificate chain (server + intermediate + root)
+        '/home/weskin/Desktop/secure-iot-command-control-system/certificates/ca/intermediate/private/flask-web.key.pem',   # Private key
+    )
+
     print("Starting Flask application with integrated MQTT...")
     print("MQTT connection will be established in background")
     print("Access the web interface at http://localhost:5000")
-    app.run(debug=True, port=5000, use_reloader=False)  # Disable reloader to prevent MQTT issues
+
+    app.run(host="localhost", port=5000, debug=True, ssl_context=ssl_context, use_reloader=False)  # Disable reloader to prevent MQTT issues
