@@ -30,6 +30,9 @@ class IoTDevice:
         # Load Command Center's public key from its certificate
         self.command_center_pubkey = self._load_public_key()
 
+        # Load device's signing key
+        self.signing_key = self._load_signing_key()
+
         print(f"Secure Device {device_id} ({device_type}) initialized  ")
 
     def _verify_certificates(self):
@@ -53,6 +56,25 @@ class IoTDevice:
             cert = load_pem_x509_certificate(f.read(), default_backend())
             return cert.public_key()  
 
+    def _load_signing_key(self):
+        with open(self.device_key, 'rb') as f:
+            return serialization.load_pem_private_key(
+                f.read(),
+                password=None,
+                backend=default_backend()
+            )
+        
+    def _sign_message(self, message):
+        signature = self.signing_key.sign(
+            json.dumps(message).encode('utf-8'),
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.MAX_LENGTH
+            ),
+            hashes.SHA256()
+        )
+        return base64.b64encode(signature).decode()
+    
     def on_connect(self, client, userdata, flags, rc, properties):
         """Callback when connected to MQTT broker"""
 
@@ -68,14 +90,17 @@ class IoTDevice:
             self.status = "online" # Update device status
 
             # Publish a JSON status message to the broker (e.g., "iot/devices/dev001/status")
-            status_msg = json.dumps({
+            status_msg = {
                 "device_id": self.device_id,
                 "type": self.device_type,
                 "status": self.status,
                 "timestamp": time.time() # Current Unix timestamp
-            })
+            }
 
-            client.publish(f"iot/devices/{self.device_id}/status", status_msg) # Send message
+            # Add digital signature
+            status_msg["signature"] = self._sign_message(status_msg)
+
+            client.publish(f"iot/devices/{self.device_id}/status", json.dumps(status_msg)) # Send message
             print(f"Published online status for device {self.device_id}")
         else:
             print(f"Device {self.device_id} failed to connect. Return code: {rc}")
@@ -115,14 +140,17 @@ class IoTDevice:
             result = self.process_command(command) # Call processing logic
 
             # Publish the result to a results topic (e.g., "iot/devices/dev001/results")
-            result_msg = json.dumps({
+            result_msg = {
                 "device_id": self.device_id,
                 "command": command,
                 "result": result,
                 "timestamp": time.time()
-            })
+            }
 
-            client.publish(f"iot/devices/{self.device_id}/results", result_msg) # Send result
+            # Add digital signature
+            result_msg["signature"] = self._sign_message(result_msg)
+
+            client.publish(f"iot/devices/{self.device_id}/results", json.dumps(result_msg)) # Send result
             print(f"Published command result for {command}")
         except InvalidSignature:
             print(f"Tampered command rejected: {command_data.get('command')}")
@@ -222,14 +250,17 @@ if __name__ == "__main__":
 
         # Publish offline status before disconnecting
         if hasattr(device, 'mqtt_client') and device.mqtt_client:
-            status_msg = json.dumps({
+            status_msg = {
                 "device_id": device.device_id,
                 "status": "offline",
                 "type": device.device_type,
                 "timestamp": time.time()
-            })
+            }
 
-            device.mqtt_client.publish(f"iot/devices/{device.device_id}/status", status_msg)
+            # Add digital signature
+            status_msg["signature"] = device._sign_message(status_msg)
+
+            device.mqtt_client.publish(f"iot/devices/{device.device_id}/status", json.dumps(status_msg))
             time.sleep(1)  # Give time for message to be sent
             device.mqtt_client.disconnect()
             

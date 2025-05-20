@@ -19,6 +19,8 @@ from flask_talisman import Talisman
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.x509 import load_pem_x509_certificate
+from cryptography.exceptions import InvalidSignature
 import base64
 
 
@@ -77,6 +79,7 @@ class MQTTIntegratedApp:
         # MQTT connection status and devices
         self.mqtt_connected = False
         self.devices = {}
+        self.device_certs = {}  # Cache for device public keys
         self.mqtt_client = None
         self.connection_lock = threading.Lock()
         
@@ -122,6 +125,15 @@ class MQTTIntegratedApp:
                 backend=default_backend()
             )
         
+    def _get_device_public_key(self, device_id):
+        """Get public key from device certificate"""
+        if device_id not in self.device_certs:
+            cert_path = f"device_certs/device_001.cert.pem" # later change to {device_id}
+            with open(cert_path, "rb") as f:
+                cert = load_pem_x509_certificate(f.read(), default_backend())
+                self.device_certs[device_id] = cert.public_key()
+        return self.device_certs[device_id]
+    
     def _connect_mqtt(self):
         """Connect to MQTT broker with TLS"""
         print("Setting up MQTT connection...")
@@ -209,6 +221,19 @@ class MQTTIntegratedApp:
             device_id = topic_parts[2]
             message_type = topic_parts[3]  # status or results
             
+            # Verify digital signature
+            signature = base64.b64decode(message_data.pop('signature'))
+            public_key = self._get_device_public_key(device_id)
+            public_key.verify(
+                signature,
+                json.dumps(message_data).encode('utf-8'),
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH
+                ),
+                hashes.SHA256()
+            )
+
             with self.connection_lock:
                 if message_type == "status":
                     # Update device registry with status
@@ -223,7 +248,10 @@ class MQTTIntegratedApp:
                     command = message_data.get("command")
                     result = message_data.get("result")
                     print(f"Received result for command {command} on device {device_id}: {result}")
-                    
+        except InvalidSignature:
+            print(f"⚠️ Tampered message from {device_id}! Rejecting.")
+        except KeyError as e:
+            print(f"Missing field in message: {str(e)}")                 
         except json.JSONDecodeError:
             print(f"Received invalid JSON: {msg.payload.decode()}")
         except Exception as e:
@@ -281,11 +309,11 @@ class MQTTIntegratedApp:
     def get_devices(self):
         """Get current device list"""
         with self.connection_lock:
-            # Remove devices that haven't updated in 120 seconds
+            # Remove devices that haven't updated in 300 seconds
             current_time = time.time()
             active_devices = {}
             for device_id, device_info in self.devices.items():
-                if current_time - device_info['last_update'] < 120:
+                if current_time - device_info['last_update'] < 300:
                     active_devices[device_id] = device_info
                 else:
                     print(f"Device {device_id} timed out")
