@@ -24,7 +24,7 @@ from cryptography.exceptions import InvalidSignature
 import base64
 from functools import wraps 
 from datetime import datetime
-
+from flask_wtf.csrf import CSRFProtect
 
 # Initialize LoginManager
 login_manager = LoginManager()
@@ -33,6 +33,8 @@ login_manager.login_view = 'login'
 # Create Flask Application
 app = Flask(__name__)
 app.secret_key = 'dev_key_change_this_later'  # We'll make this more secure later
+app.config['WTF_CSRF_COOKIE_NAME'] = 'csrf_token'  # Add this line
+csrf = CSRFProtect(app)
 
 talisman = Talisman(
     app,
@@ -275,6 +277,20 @@ class MQTTIntegratedApp:
             )
 
             with self.connection_lock:
+                # REPLAY PROTECTION: TIMESTAMP VALIDATION
+                message_timestamp = message_data.get("timestamp")
+                if not message_timestamp:
+                    log_msg = f"Missing timestamp from {device_id}"
+                    self.add_audit_log("SECURITY", log_msg, device_id)
+                    return
+
+                current_time = time.time()
+                if abs(current_time - message_timestamp) > 300:  # 5-minute window
+                    log_msg = f"Replay attack detected from {device_id} (Δ={current_time-message_timestamp:.1f}s)"
+                    print(f"⚠️ {log_msg}")
+                    self.add_audit_log("SECURITY", log_msg, device_id)
+                    return
+                
                 if message_type == "status":
                     # Update device registry with status
                     self.devices[device_id] = {
@@ -288,6 +304,13 @@ class MQTTIntegratedApp:
                     command = message_data.get("command")
                     result = message_data.get("result")
                     print(f"Received result for command {command} on device {device_id}: {result}")
+
+                    # Add security log for replay rejections
+                    if "REJECTED: Replay attack detected" in result:
+                        log_msg = f"Replay attack blocked by {device_id} (command: {command})"
+                        print(f"🔴 {log_msg}")
+                        self.add_audit_log("SECURITY", log_msg, device_id)
+
         except InvalidSignature:
             log_msg = f"Tampered message from {device_id}! Rejecting."
             print(f"⚠️ {log_msg}")
@@ -306,19 +329,26 @@ class MQTTIntegratedApp:
             self.add_audit_log("ERROR", log_msg, "SYSTEM")
 
     def send_command(self, device_id, command):
-        """Send a command to a device"""
+        """Original method with automatic timestamp"""
+        return self._send_command_internal(device_id, command, time.time())
+
+    def send_command_with_timestamp(self, device_id, command, custom_timestamp):
+        """New method for testing with custom timestamp"""
+        return self._send_command_internal(device_id, command, custom_timestamp)
+
+    def _send_command_internal(self, device_id, command, timestamp):
+        """Shared implementation between both methods"""
         with self.connection_lock:
             if not self.mqtt_client or not self.mqtt_connected:
                 print("MQTT client not connected")
                 return False
         
         try:
-            # Create JSON command message
             command_msg = {
                 "command": command,
-                "timestamp": time.time(),
+                "timestamp": timestamp,
                 "source": "command_center",
-                "message_id": f"cmd_{int(time.time() * 1000)}"
+                "message_id": f"cmd_{int(timestamp * 1000000)}"
             }
 
             # Generate signature
@@ -329,7 +359,7 @@ class MQTTIntegratedApp:
                     salt_length=padding.PSS.MAX_LENGTH
                 ),
                 hashes.SHA256()
-            )            
+            )
 
             # Add signature to message
             command_msg['signature'] = base64.b64encode(signature).decode()
@@ -374,7 +404,7 @@ class MQTTIntegratedApp:
     def add_audit_log(self, event_type, details, source):
         """Add an entry to the audit log"""
         log_entry = {
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),  # Use datetime instead of time
             "event_type": event_type,
             "details": details,
             "source": source
@@ -498,6 +528,23 @@ def send_command():
     else:
         return jsonify({"status": "error", "message": "Failed to send command"}), 500
 
+@app.route('/api/send_replay', methods=['POST'])
+@admin_required
+def send_replay_command():
+    try:
+        device_id = request.form.get("device_id")
+        command = request.form.get("command")
+        timestamp = float(request.form.get("timestamp"))
+        
+        success = mqtt_app.send_command_with_timestamp(device_id, command, timestamp)
+        
+        if success:
+            return jsonify({"status": "success", "message": "Replay test command sent"})
+        else:
+            return jsonify({"status": "error", "message": "Failed to send replay"}), 500
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+    
 @app.route('/api/devices')
 def get_devices():
     return jsonify({"status": "success", "devices": mqtt_app.get_devices()})
@@ -508,7 +555,7 @@ def get_status():
         "mqtt_connected": mqtt_app.get_connection_status(),
         "device_count": len(mqtt_app.get_devices())
     })
-
+    
 # Start the application
 if __name__ == '__main__':
 

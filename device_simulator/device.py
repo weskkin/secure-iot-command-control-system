@@ -133,6 +133,26 @@ class IoTDevice:
                 hashes.SHA256()
             )
 
+            # REPLAY PROTECTION: TIMESTAMP VALIDATION
+            command_timestamp = command_data.get("timestamp")
+            if not command_timestamp:
+                print("Missing timestamp in command")
+                return
+
+            current_time = time.time()
+            if abs(current_time - command_timestamp) > 300:  # 5-minute window
+                print(f"⚠️ Replay attack detected (Δ={current_time-command_timestamp:.1f}s)")
+                # Send rejection notification
+                result_msg = {
+                    "device_id": self.device_id,
+                    "command": command_data.get('command', 'unknown'),
+                    "result": "REJECTED: Replay attack detected",
+                    "timestamp": time.time()
+                }
+                result_msg["signature"] = self._sign_message(result_msg)
+                client.publish(f"iot/devices/{self.device_id}/results", json.dumps(result_msg))
+                return
+
             command = command_data.get('command') # Extract command field
 
             if not command: # Handle missing command field
