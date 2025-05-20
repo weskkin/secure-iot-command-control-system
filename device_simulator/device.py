@@ -4,6 +4,12 @@ import paho.mqtt.client as mqtt
 import json
 import ssl
 import os
+from cryptography.x509 import load_pem_x509_certificate
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.backends import default_backend 
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import padding
+import base64
 
 class IoTDevice:
     def __init__(self, device_id, device_type):
@@ -15,11 +21,14 @@ class IoTDevice:
 
         # TLS certificate paths
         self.ca_cert = "/home/weskin/Desktop/secure-iot-command-control-system/certificates/ca/certs/ca.cert.pem"
-        self.device_cert = "/home/weskin/Desktop/secure-iot-command-control-system/certificates/ca/intermediate/certs/device_001-chain.cert.pem" # if doesnt work create a certificate chain of device + intermediate and put it here
+        self.device_cert = "/home/weskin/Desktop/secure-iot-command-control-system/certificates/ca/intermediate/certs/device_001-chain.cert.pem"
         self.device_key = "/home/weskin/Desktop/secure-iot-command-control-system/certificates/ca/intermediate/private/device_001.key.pem"
 
         # Verify certificate files exist
         self._verify_certificates()
+
+        # Load Command Center's public key from its certificate
+        self.command_center_pubkey = self._load_public_key()
 
         print(f"Secure Device {device_id} ({device_type}) initialized  ")
 
@@ -36,7 +45,13 @@ class IoTDevice:
             if not os.path.exists(cert_path):
                 raise FileNotFoundError(f"{cert_name} not found at: {cert_path}")
             
-        print("All device certificate files found")        
+        print("All device certificate files found")      
+
+    def _load_public_key(self):
+        """Load public key from Command Center's certificate"""
+        with open("command_center.cert.pem", "rb") as f:
+            cert = load_pem_x509_certificate(f.read(), default_backend())
+            return cert.public_key()  
 
     def on_connect(self, client, userdata, flags, rc, properties):
         """Callback when connected to MQTT broker"""
@@ -73,6 +88,21 @@ class IoTDevice:
         try:
             # Parse incoming JSON payload
             command_data = json.loads(msg.payload.decode())
+
+            # Extract signature
+            signature = base64.b64decode(command_data.pop('signature'))
+
+            # Verify signature
+            self.command_center_pubkey.verify(
+                signature,
+                json.dumps(command_data).encode('utf-8'),
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH
+                ),
+                hashes.SHA256()
+            )
+
             command = command_data.get('command') # Extract command field
 
             if not command: # Handle missing command field
@@ -94,6 +124,10 @@ class IoTDevice:
 
             client.publish(f"iot/devices/{self.device_id}/results", result_msg) # Send result
             print(f"Published command result for {command}")
+        except InvalidSignature:
+            print(f"Tampered command rejected: {command_data.get('command')}")
+        except KeyError:
+            print("Missing signature in command")
         except json.JSONDecodeError: # Invalid JSON
             print(f"Received invalid JSON: {msg.payload.decode()}")
         except Exception as e: # Generic Errors

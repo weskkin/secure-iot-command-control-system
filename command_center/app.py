@@ -16,6 +16,10 @@ from flask_login import (
 from werkzeug.security import generate_password_hash, check_password_hash
 import sqlite3
 from flask_talisman import Talisman
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import padding
+import base64
 
 
 # Initialize LoginManager
@@ -87,6 +91,9 @@ class MQTTIntegratedApp:
         # Initialize MQTT connection in background
         self._setup_mqtt()
 
+        # Load existing TLS private key for signing
+        self.signing_key = self._load_signing_key()
+
     def _verify_certificates(self):
         """Verify that all required certificate files exist"""
         cert_files = [
@@ -106,6 +113,15 @@ class MQTTIntegratedApp:
         mqtt_thread = threading.Thread(target=self._connect_mqtt, daemon=True)
         mqtt_thread.start()
 
+    def _load_signing_key(self):
+        """Load existing TLS private key (command_center.key.pem)"""
+        with open(self.center_key, 'rb') as f:  # self.center_key is already defined
+            return serialization.load_pem_private_key(
+                f.read(),
+                password=None,
+                backend=default_backend()
+            )
+        
     def _connect_mqtt(self):
         """Connect to MQTT broker with TLS"""
         print("Setting up MQTT connection...")
@@ -222,17 +238,30 @@ class MQTTIntegratedApp:
         
         try:
             # Create JSON command message
-            command_msg = json.dumps({
+            command_msg = {
                 "command": command,
                 "timestamp": time.time(),
-                "source": "flask_command_center",
-                "message_id": f"cmd_{int(time.time() * 1000000)}"
-            })
-            
+                "source": "command_center",
+                "message_id": f"cmd_{int(time.time() * 1000)}"
+            }
+
+            # Generate signature
+            signature = self.signing_key.sign(
+                json.dumps(command_msg).encode('utf-8'),
+                padding.PSS(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    salt_length=padding.PSS.MAX_LENGTH
+                ),
+                hashes.SHA256()
+            )            
+
+            # Add signature to message
+            command_msg['signature'] = base64.b64encode(signature).decode()
+
             # Publish to device's command topic
             topic = f"iot/devices/{device_id}/commands"
             with self.connection_lock:
-                result = self.mqtt_client.publish(topic, command_msg)
+                result = self.mqtt_client.publish(topic, json.dumps(command_msg))
             
             if result.rc == mqtt.MQTT_ERR_SUCCESS:
                 print(f"Sent command {command} to device {device_id}")
@@ -252,11 +281,11 @@ class MQTTIntegratedApp:
     def get_devices(self):
         """Get current device list"""
         with self.connection_lock:
-            # Remove devices that haven't updated in 30 seconds
+            # Remove devices that haven't updated in 120 seconds
             current_time = time.time()
             active_devices = {}
             for device_id, device_info in self.devices.items():
-                if current_time - device_info['last_update'] < 30:
+                if current_time - device_info['last_update'] < 120:
                     active_devices[device_id] = device_info
                 else:
                     print(f"Device {device_id} timed out")
