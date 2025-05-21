@@ -202,8 +202,8 @@ class MQTTIntegratedApp:
                 certfile=self.center_cert,
                 keyfile=self.center_key,
                 cert_reqs=ssl.CERT_REQUIRED,
-                tls_version=ssl.PROTOCOL_TLSv1_2,
-                ciphers='DEFAULT@SECLEVEL=1'
+                tls_version=ssl.PROTOCOL_TLSv1_2,  # Explicit TLS 1.2
+                ciphers='ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384'
             )
             
             # Set TLS options

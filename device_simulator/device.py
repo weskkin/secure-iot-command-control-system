@@ -240,7 +240,7 @@ class IoTDevice:
                 keyfile=self.device_key,
                 cert_reqs=ssl.CERT_REQUIRED,
                 tls_version=ssl.PROTOCOL_TLSv1_2,
-                ciphers='DEFAULT@SECLEVEL=1'
+                ciphers='ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384'
             )
 
             # Set TLS options
