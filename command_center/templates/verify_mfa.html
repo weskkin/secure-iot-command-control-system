@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>🔑 MFA Verification</h1>
+  <form method="POST">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="number" name="code" placeholder="6-digit code" required>
+    <button type="submit">Verify</button>
+  </form>
+  <p class="text-muted">Lost access? <a href="/recovery">Use backup code</a></p>
+{% endblock %}

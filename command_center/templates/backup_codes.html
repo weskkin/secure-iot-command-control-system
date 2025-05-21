@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Backup Codes{% endblock %}
+
+{% block content %}
+  <h1>🔑 Backup Codes</h1>
+  <div class="backup-codes">
+    <p>Store these codes securely:</p>
+    <div class="code-list">
+      {% for code in codes %}
+        <div class="code-item">{{ code }}</div>
+      {% endfor %}
+    </div>
+    <p class="warning">⚠️ These codes will only be shown once!</p>
+    <a href="/control" class="btn">Return to Control Panel</a>
+  </div>
+{% endblock %}

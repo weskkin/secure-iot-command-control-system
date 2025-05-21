@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, abort
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, abort, session
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import os
@@ -29,6 +29,9 @@ from datetime import datetime
 from flask_wtf.csrf import CSRFProtect
 import re
 from dotenv import load_dotenv
+import pyotp
+import qrcode
+import secrets
 
 load_dotenv()  # Load .env file
 
@@ -42,7 +45,9 @@ login_manager = LoginManager()
 login_manager.login_view = 'login'
 
 # Create Flask Application
-app = Flask(__name__)
+app = Flask(__name__, 
+           static_folder='static',
+           template_folder='templates')
 app.secret_key = os.getenv('SECRET_KEY')
 app.config['WTF_CSRF_COOKIE_NAME'] = 'csrf_token'  # Add this line
 csrf = CSRFProtect(app)
@@ -83,10 +88,43 @@ def validate_password(password):
     
 # User model
 class User(UserMixin):
-    def __init__(self, id, username, role="operator"):
+    def __init__(self, id, username, role, totp_secret=None, 
+                 mfa_enabled=False, backup_codes='[]'):
         self.id = id
         self.username = username
         self.role = role
+        self.totp_secret = totp_secret
+        self.mfa_enabled = mfa_enabled
+        self.backup_codes = backup_codes
+
+    def verify_totp(self, code):
+        return pyotp.TOTP(self.totp_secret).verify(code, valid_window=1)
+    
+    def generate_backup_codes(self):
+        # Generate 8-character codes (without hyphens)
+        raw_codes = [secrets.token_hex(4) for _ in range(5)]  # 4 bytes = 8 chars
+        
+        # Hash codes for storage
+        hashed_codes = [generate_password_hash(code) for code in raw_codes]
+        self.backup_codes = json.dumps(hashed_codes)
+        
+        # Return formatted codes WITH hyphens for user display only
+        return [f"{code[:4]}-{code[4:]}" for code in raw_codes]
+    
+    def check_backup_code(self, code):
+        # Remove hyphens and normalize
+        sanitized = code.replace("-", "").strip().lower()
+        
+        # Validate format
+        if len(sanitized) != 8 or not re.match(r'^[a-f0-9]{8}$', sanitized):
+            return False
+        
+        # Check against stored HASHES
+        try:
+            stored_hashes = json.loads(self.backup_codes or '[]')
+            return any(check_password_hash(h, sanitized) for h in stored_hashes)
+        except:
+            return False
 
 # Database setup (SQLite for simplicity)
 # Get absolute path to THIS file (app.py)
@@ -98,17 +136,27 @@ DB_PATH = os.path.join(current_dir, "users.db")
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS users 
-                (id INTEGER PRIMARY KEY, 
-                 username TEXT UNIQUE, 
-                 password_hash TEXT,
-                 role TEXT NOT NULL DEFAULT 'operator',
-                 last_login REAL)''')  # Added last_login column
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS users 
+        (
+            id INTEGER PRIMARY KEY, 
+            username TEXT UNIQUE,
+            password_hash TEXT,
+            role TEXT NOT NULL DEFAULT 'operator',
+            last_login REAL,
+            totp_secret TEXT DEFAULT '',
+            mfa_enabled BOOLEAN DEFAULT 0,
+            backup_codes TEXT DEFAULT '[]'
+        )
+    ''')
     
-    # Add admin with null last_login
+    # Add admin user if not exists
     admin_hash = generate_password_hash("secure_admin_password")
-    c.execute("INSERT OR IGNORE INTO users (username, password_hash, role) VALUES (?, ?, ?)",
-             ("admin", admin_hash, "admin"))
+    c.execute('''
+        INSERT OR IGNORE INTO users 
+        (username, password_hash, role) 
+        VALUES (?, ?, ?)
+    ''', ("admin", admin_hash, "admin"))
     
     conn.commit()
     conn.close()
@@ -117,15 +165,21 @@ init_db()  # Run once
 
 @login_manager.user_loader
 def load_user(user_id):
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT id, username, role FROM users WHERE id = ?", (user_id,))
-    user = c.fetchone()
+    c.execute("SELECT id, username, role, totp_secret, mfa_enabled, backup_codes FROM users WHERE id = ?", (user_id,))
+    user_data = c.fetchone()
     conn.close()
     
-    if user:
-        print(f"★ Loaded User: ID={user[0]}, Role={user[2]}")  # Debug
-        return User(id=user[0], username=user[1], role=user[2])
+    if user_data:
+        return User(
+            id=user_data[0],
+            username=user_data[1],
+            role=user_data[2],
+            totp_secret=user_data[3],
+            mfa_enabled=bool(user_data[4]),
+            backup_codes=user_data[5]
+        )
     return None
 
 def admin_required(func):
@@ -479,7 +533,7 @@ def control():
 limiter = Limiter(app=app, key_func=get_remote_address, storage_uri="memory://")
 
 @app.route('/login', methods=['GET', 'POST'])
-@limiter.limit("5 per 5 minutes")  # 5 attempts every 5 minutes
+@limiter.limit("20 per 5 minutes")  # 20 attempts every 5 minutes
 def login():
     if request.method == 'POST':
         username = request.form['username']
@@ -487,23 +541,42 @@ def login():
         
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        c.execute("SELECT * FROM users WHERE username = ?", (username,))
-        user = c.fetchone()
+        # Get ALL user fields needed for User object
+        c.execute("""
+            SELECT id, username, password_hash, role, 
+                   totp_secret, mfa_enabled, backup_codes 
+            FROM users WHERE username = ?
+        """, (username,))
+        user_data = c.fetchone()
         conn.close()
         
-        if user and check_password_hash(user[2], password):
-            user_obj = User(id=user[0], username=user[1], role=user[3])
+        if user_data and check_password_hash(user_data[2], password):
+            # Create PROPER User object with all fields
+            user_obj = User(
+                id=user_data[0],
+                username=user_data[1],
+                role=user_data[3],
+                totp_secret=user_data[4],
+                mfa_enabled=bool(user_data[5]),
+                backup_codes=user_data[6]
+            )
+            
+            # Check MFA on the User OBJECT
+            if user_obj.mfa_enabled:
+                session['mfa_pending_user'] = user_obj.id
+                return redirect(url_for('verify_login'))
+            
             login_user(user_obj)
             
             # Update last login time
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
             c.execute("UPDATE users SET last_login = ? WHERE id = ?",
-                     (datetime.now().timestamp(), user[0]))
+                    (datetime.now().timestamp(), user_data[0]))
             conn.commit()
             conn.close()
             
-            mqtt_app.add_audit_log("AUTH", f"Successful login from {request.remote_addr}", user[1])
+            mqtt_app.add_audit_log("AUTH", f"Successful login from {request.remote_addr}", user_data[1])
             return redirect(url_for('control'))
         else:
             mqtt_app.add_audit_log("AUTH_FAIL", 
@@ -512,6 +585,120 @@ def login():
             )
             flash('Invalid credentials')
     return render_template('login.html')
+
+# Enable MFA Page
+@app.route('/enable-mfa')
+@login_required
+def enable_mfa():
+    if not current_user.totp_secret:
+        current_user.totp_secret = pyotp.random_base32()
+        # Update database
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("UPDATE users SET totp_secret = ? WHERE id = ?",
+                 (current_user.totp_secret, current_user.id))
+        conn.commit()
+        conn.close()
+    
+    # Generate provisioning URI
+    totp_uri = pyotp.totp.TOTP(current_user.totp_secret).provisioning_uri(
+        name=current_user.username,
+        issuer_name="IoT Command Center"
+    )
+    
+    # Generate QR code
+    img = qrcode.make(totp_uri)
+    img.save("command_center/static/mfa_qr.png")
+    
+    return render_template('enable_mfa.html')
+
+# Verify MFA Setup
+@app.route('/verify-mfa', methods=['POST'])
+@login_required
+def verify_mfa():
+    code = request.form.get('code')
+    if current_user.verify_totp(code):
+        # Update database to enable MFA
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("""
+            UPDATE users 
+            SET mfa_enabled = 1 
+            WHERE id = ?
+        """, (current_user.id,))
+        
+        # Generate and store backup codes
+        backup_codes = current_user.generate_backup_codes()
+        c.execute("UPDATE users SET backup_codes = ? WHERE id = ?",
+                (current_user.backup_codes, current_user.id))
+        conn.commit()
+        conn.close()
+        
+        flash('MFA enabled successfully!')
+        return render_template('backup_codes.html', codes=backup_codes)
+    
+    flash('Invalid verification code')
+    return redirect(url_for('enable_mfa'))
+
+# MFA Login Verification
+@app.route('/verify-login', methods=['GET', 'POST'])
+def verify_login():
+    if request.method == 'POST':
+        user_id = session.get('mfa_pending_user')
+        if not user_id:
+            return redirect(url_for('login'))
+        
+        user = load_user(user_id)
+        code = request.form.get('code')
+        
+        if user.verify_totp(code) or user.verify_backup_code(code):
+            login_user(user)
+            session.pop('mfa_pending_user')
+            return redirect(url_for('control'))
+        
+        flash('Invalid code')
+    return render_template('verify_mfa.html')
+
+@app.route('/recovery', methods=['GET', 'POST'])
+@limiter.limit("20 per 10 minutes")
+def recovery():
+    if request.method == 'POST':
+        code = request.form.get('code')
+        user_id = session.get('mfa_pending_user')
+        
+        if not user_id:
+            flash('Session expired. Please login again.')
+            return redirect(url_for('login'))
+        
+        # Load user from database
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, username, role, backup_codes 
+            FROM users WHERE id = ?
+        """, (user_id,))
+        user_data = c.fetchone()
+        conn.close()
+        
+        if user_data:
+            user = User(
+                id=user_data[0],
+                username=user_data[1],
+                role=user_data[2],
+                backup_codes=user_data[3]
+            )
+            
+            if user.check_backup_code(code):
+                login_user(user)
+                session.pop('mfa_pending_user', None)
+                mqtt_app.add_audit_log("AUTH", "Backup code used", user.username)
+                return redirect(url_for('control'))
+            
+        flash('Invalid backup code')
+        return redirect(url_for('recovery'))
+    
+    # GET request - show backup code entry form
+    return render_template('recovery.html')
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
