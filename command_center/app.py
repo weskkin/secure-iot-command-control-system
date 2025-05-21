@@ -89,8 +89,11 @@ class User(UserMixin):
         self.role = role
 
 # Database setup (SQLite for simplicity)
-# Update all sqlite3.connect() calls to use absolute path
-DB_PATH = os.path.join(os.path.dirname(__file__), os.getenv('DB_PATH'))
+# Get absolute path to THIS file (app.py)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+
+# DB will always be in command_center/
+DB_PATH = os.path.join(current_dir, "users.db")
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -482,7 +485,7 @@ def login():
         username = request.form['username']
         password = request.form['password']
         
-        conn = sqlite3.connect('users.db')
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute("SELECT * FROM users WHERE username = ?", (username,))
         user = c.fetchone()
@@ -536,7 +539,7 @@ def register():
         password_hash = generate_password_hash(password)
         
         try:
-            conn = sqlite3.connect('users.db')
+            conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
             c.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", 
                      (username, password_hash, "operator"))
