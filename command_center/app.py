@@ -305,7 +305,7 @@ class MQTTIntegratedApp:
                     return
 
                 current_time = time.time()
-                if abs(current_time - message_timestamp) > 300:  # 5-minute window
+                if abs(current_time - message_timestamp) > 30:  # 30-second window
                     log_msg = f"Replay attack detected from {device_id} (Δ={current_time-message_timestamp:.1f}s)"
                     print(f"⚠️ {log_msg}")
                     self.add_audit_log("SECURITY", log_msg, device_id)

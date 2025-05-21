@@ -169,7 +169,7 @@ class IoTDevice:
                 return
 
             current_time = time.time()
-            if abs(current_time - command_timestamp) > 300:  # 5-minute window
+            if abs(current_time - command_timestamp) > 30:  # 30-second window
                 print(f"⚠️ Replay attack detected (Δ={current_time-command_timestamp:.1f}s)")
                 # Send rejection notification
                 result_msg = {
