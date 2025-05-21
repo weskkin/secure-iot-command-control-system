@@ -11,29 +11,23 @@ NC='\033[0m' # No Color
 
 echo -e "${YELLOW}Starting Secure MQTT Broker...${NC}"
 
+# Get absolute project root path (two levels up from script location)
+PROJECT_ROOT=$(dirname "$(dirname "$(realpath "$0")")")
+
+# Create secure persistence directory
+PERSIST_DIR="${PROJECT_ROOT}/mosquitto_persistence"
+mkdir -p "$PERSIST_DIR"
+chmod 700 "$PERSIST_DIR"
+
 # Check if config file exists
-if [ ! -f "config/mosquitto.conf" ]; then
-    echo -e "${RED}Error: config/mosquitto.conf not found!${NC}"
+if [ ! -f "${PROJECT_ROOT}/config/mosquitto.conf" ]; then
+    echo -e "${RED}Error: mosquitto.conf not found at ${PROJECT_ROOT}/config/mosquitto.conf${NC}"
     exit 1
 fi
-
-# Check if certificates exist
-if [ ! -f "certificates/ca/certs/ca.cert.pem" ]; then
-    echo -e "${RED}Error: CA certificate not found!${NC}"
-    exit 1
-fi
-
-if [ ! -f "certificates/ca/intermediate/certs/mqtt_broker.cert.pem" ]; then
-    echo -e "${RED}Error: Broker certificate not found!${NC}"
-    exit 1
-fi
-
-# Create temporary directory for persistence
-mkdir -p /tmp/mosquitto
 
 # Start the broker
 echo -e "${GREEN}Starting Mosquitto with TLS configuration...${NC}"
 echo -e "${YELLOW}Press Ctrl+C to stop${NC}"
 
-# Run mosquitto with our configuration
-mosquitto -c config/mosquitto.conf -v
+# Start mosquitto with only the config file
+mosquitto -c "${PROJECT_ROOT}/config/mosquitto.conf" -v

@@ -11,6 +11,7 @@ from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 import base64
 import re
+from pathlib import Path
 
 class IoTDevice:
     def __init__(self, device_id, device_type):
@@ -26,9 +27,16 @@ class IoTDevice:
         }
 
         # TLS certificate paths
-        self.ca_cert = "/home/weskin/Desktop/secure-iot-command-control-system/certificates/ca/certs/ca.cert.pem"
-        self.device_cert = "/home/weskin/Desktop/secure-iot-command-control-system/certificates/ca/intermediate/certs/device_001-chain.cert.pem"
-        self.device_key = "/home/weskin/Desktop/secure-iot-command-control-system/certificates/ca/intermediate/private/device_001.key.pem"
+        # Get the absolute path to this script's directory
+        base_dir = Path(__file__).parent.absolute()
+        
+        # TLS certificate paths - Update these paths
+        self.ca_cert = base_dir / "ca.cert.pem"
+        self.device_cert = base_dir / "device_certs/device_001-chain.cert.pem"
+        self.device_key = base_dir / "device_certs/device_001.key.pem"
+
+        print(f"CA Path: {self.ca_cert}")
+        print(f"Device Cert Path: {self.device_cert}")
 
         # Verify certificate files exist
         self._verify_certificates()

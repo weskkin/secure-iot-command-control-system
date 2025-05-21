@@ -26,6 +26,9 @@ from functools import wraps
 from datetime import datetime
 from flask_wtf.csrf import CSRFProtect
 import re
+from dotenv import load_dotenv
+
+load_dotenv()  # Load .env file
 
 ALLOWED_COMMANDS = {
     "temperature_sensor": ["read_temperature", "restart"],
@@ -38,7 +41,7 @@ login_manager.login_view = 'login'
 
 # Create Flask Application
 app = Flask(__name__)
-app.secret_key = 'dev_key_change_this_later'  # We'll make this more secure later
+app.secret_key = os.getenv('SECRET_KEY')
 app.config['WTF_CSRF_COOKIE_NAME'] = 'csrf_token'  # Add this line
 csrf = CSRFProtect(app)
 
@@ -66,7 +69,7 @@ class User(UserMixin):
 
 # Database setup (SQLite for simplicity)
 # Update all sqlite3.connect() calls to use absolute path
-DB_PATH = "/home/weskin/Desktop/secure-iot-command-control-system/command_center/users.db"
+DB_PATH = os.path.join(os.path.dirname(__file__), os.getenv('DB_PATH'))
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -117,9 +120,12 @@ class MQTTIntegratedApp:
         self.connection_lock = threading.Lock()
         
         # TLS certificate paths
-        self.ca_cert = "/home/weskin/Desktop/secure-iot-command-control-system/certificates/ca/certs/ca.cert.pem"
-        self.center_cert = "/home/weskin/Desktop/secure-iot-command-control-system/certificates/ca/intermediate/certs/client-chain.cert.pem"
-        self.center_key = "/home/weskin/Desktop/secure-iot-command-control-system/certificates/ca/intermediate/private/command_center.key.pem"
+        # Get project root path
+        self.project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        self.ca_cert = os.path.join(self.project_root, "certificates/ca/certs/ca.cert.pem")
+        self.center_cert = os.path.join(self.project_root, "certificates/ca/intermediate/certs/client-chain.cert.pem")
+        self.center_key = os.path.join(self.project_root, "certificates/ca/intermediate/private/command_center.key.pem")
         
         # Verify certificate files exist
         self._verify_certificates()
@@ -161,7 +167,14 @@ class MQTTIntegratedApp:
     def _get_device_public_key(self, device_id):
         """Get public key from device certificate"""
         if device_id not in self.device_certs:
-            cert_path = f"device_certs/device_001.cert.pem" # later change to {device_id}
+            # Path to device simulator certificates
+            cert_path = os.path.join(
+                self.project_root,
+                "device_simulator/device_certs/device_001-chain.cert.pem"
+            )
+            if not os.path.exists(cert_path):
+                raise FileNotFoundError(f"Device certificate not found: {cert_path}")
+                
             with open(cert_path, "rb") as f:
                 cert = load_pem_x509_certificate(f.read(), default_backend())
                 self.device_certs[device_id] = cert.public_key()
@@ -599,14 +612,14 @@ def get_status():
     
 # Start the application
 if __name__ == '__main__':
-
+    # Get project root path (command_center's parent directory)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
     ssl_context = (
-        '/home/weskin/Desktop/secure-iot-command-control-system/certificates/ca/intermediate/certs/flask-web-chain.cert.pem',  # Certificate chain (server + intermediate + root)
-        '/home/weskin/Desktop/secure-iot-command-control-system/certificates/ca/intermediate/private/flask-web.key.pem',   # Private key
+        os.path.join(project_root, "certificates/ca/intermediate/certs/flask-web-chain.cert.pem"),
+        os.path.join(project_root, "certificates/ca/intermediate/private/flask-web.key.pem")
     )
 
     print("Starting Flask application with integrated MQTT...")
-    print("MQTT connection will be established in background")
-    print("Access the web interface at http://localhost:5000")
-
-    app.run(host="localhost", port=5000, debug=True, ssl_context=ssl_context, use_reloader=False)  # Disable reloader to prevent MQTT issues
+    print(f"SSL Context: {ssl_context}")
+    app.run(host="localhost", port=5000, debug=True, ssl_context=ssl_context, use_reloader=False)
