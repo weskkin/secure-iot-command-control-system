@@ -30,9 +30,12 @@
             {% endif %}
         {% endwith %}
 
+
         <form method="POST" action="/register">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <input type="text" name="username" placeholder="Username" required>
-            <input type="password" name="password" placeholder="Password" required>
+            <input type="password" name="password" id="password" placeholder="Password" required>
+            <div id="password-errors" style="color:#dc3545; font-size:0.9em; margin:5px 0;"></div>
             <button type="submit">Create Account</button>
         </form>
 
@@ -40,5 +43,21 @@
             Already have an account? <a href="/login">Login here</a>
         </p>
     </div>
+
+    <script>
+        document.getElementById('password').addEventListener('input', function(e) {
+            const errors = [];
+            const value = e.target.value;
+            const errorDiv = document.getElementById('password-errors');
+
+            if (value.length < 12) errors.push("✗ At least 12 characters");
+            if (!/[A-Z]/.test(value)) errors.push("✗ At least 1 uppercase letter");
+            if (!/[a-z]/.test(value)) errors.push("✗ At least 1 lowercase letter");
+            if (!/\d/.test(value)) errors.push("✗ At least 1 number");
+            if (!/[!@#$%^&*(),.?":{}|<>]/.test(value)) errors.push("✗ At least 1 special character");
+
+            errorDiv.innerHTML = errors.join('<br>');
+        });
+    </script>
 </body>
 </html>

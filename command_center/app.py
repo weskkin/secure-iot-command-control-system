@@ -60,6 +60,25 @@ talisman = Talisman(
 
 login_manager.init_app(app)
 
+def validate_password(password):
+    """Enforce strong password policy
+    - 12+ chars
+    - 1 uppercase
+    - 1 lowercase
+    - 1 digit
+    - 1 special char
+    """
+    if len(password) < 12:
+        raise ValueError("Password must be at least 12 characters")
+    if not re.search(r'[A-Z]', password):
+        raise ValueError("Password needs at least 1 uppercase letter")
+    if not re.search(r'[a-z]', password):
+        raise ValueError("Password needs at least 1 lowercase letter")
+    if not re.search(r'\d', password):
+        raise ValueError("Password needs at least 1 digit")
+    if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
+        raise ValueError("Password needs at least 1 special character")
+    
 # User model
 class User(UserMixin):
     def __init__(self, id, username, role="operator"):
@@ -78,7 +97,7 @@ def init_db():
                 (id INTEGER PRIMARY KEY, 
                  username TEXT UNIQUE, 
                  password_hash TEXT,
-                 role TEXT,
+                 role TEXT NOT NULL DEFAULT 'operator',
                  last_login REAL)''')  # Added last_login column
     
     # Add admin with null last_login
@@ -95,10 +114,14 @@ init_db()  # Run once
 def load_user(user_id):
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    c.execute("SELECT id, username, role FROM users WHERE id = ?", (user_id,))
     user = c.fetchone()
     conn.close()
-    return User(id=user[0], username=user[1], role=user[3]) if user else None
+    
+    if user:
+        print(f"★ Loaded User: ID={user[0]}, Role={user[2]}")  # Debug
+        return User(id=user[0], username=user[1], role=user[2])
+    return None
 
 def admin_required(func):
     @wraps(func)
@@ -445,6 +468,7 @@ def index():
 @app.route('/control')
 @login_required
 def control():
+    print(f"★ Current User: {current_user.id}, Authenticated: {current_user.is_authenticated}")
     return render_template('control.html', devices=mqtt_app.get_devices())
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -485,19 +509,56 @@ def login():
 def register():
     if request.method == 'POST':
         username = request.form['username']
-        password = generate_password_hash(request.form['password'])
+        password = request.form['password']
+        
+        errors = []
+        if len(password) < 12:
+            errors.append("Password must be at least 12 characters")
+        if not re.search(r'[A-Z]', password):
+            errors.append("Password needs at least 1 uppercase letter")
+        if not re.search(r'[a-z]', password):
+            errors.append("Password needs at least 1 lowercase letter")
+        if not re.search(r'\d', password):
+            errors.append("Password needs at least 1 digit")
+        if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
+            errors.append("Password needs at least 1 special character")
+
+        if errors:
+            for error in errors:
+                flash(error)
+            return redirect(url_for('register'))
+        
+        password_hash = generate_password_hash(password)
         
         try:
             conn = sqlite3.connect('users.db')
             c = conn.cursor()
-            c.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", 
-                     (username, password))
+            c.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", 
+                     (username, password_hash, "operator"))
+            
             conn.commit()
-            conn.close()
+
+            # Verify insertion
+            c.execute("SELECT * FROM users WHERE username = ?", (username,))
+            user = c.fetchone()
+            print(f"★ Database User: {user}")  # Should show role='operator'   
+
+            # Create user object and log them in
+            user_obj = User(id=user[0], username=user[1], role=user[3])
+            login_user(user_obj)
+            print(f"★ Registered User: ID={user_obj.id}, Role={user_obj.role}")
+            
+            # Update audit logs
+            mqtt_app.add_audit_log("AUTH", f"New registration: {username}", "SYSTEM")
+            
             flash('Registration successful!')
-            return redirect(url_for('login'))
+            return redirect(url_for('control'))  # Changed from login to control
+            
         except sqlite3.IntegrityError:
             flash('Username already exists')
+        finally:
+            conn.close()
+            
     return render_template('register.html')
 
 @app.route('/logout')
