@@ -1,4 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, abort
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 import os
 import json
 import time
@@ -471,7 +473,10 @@ def control():
     print(f"★ Current User: {current_user.id}, Authenticated: {current_user.is_authenticated}")
     return render_template('control.html', devices=mqtt_app.get_devices())
 
+limiter = Limiter(app=app, key_func=get_remote_address, storage_uri="memory://")
+
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit("5 per 5 minutes")  # 5 attempts every 5 minutes
 def login():
     if request.method == 'POST':
         username = request.form['username']
