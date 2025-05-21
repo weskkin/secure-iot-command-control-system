@@ -10,6 +10,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 import base64
+import re
 
 class IoTDevice:
     def __init__(self, device_id, device_type):
@@ -116,6 +117,26 @@ class IoTDevice:
         print(f"Device {self.device_id} received message on topic {msg.topic}")
 
         try:
+            # ====== NEW VALIDATION CODE ======
+            # Extract device ID from topic
+            topic_parts = msg.topic.split('/')
+            if len(topic_parts) < 4:
+                print(f"Invalid topic format: {msg.topic}")
+                return
+                
+            received_device_id = topic_parts[2]
+            
+            # Validate device ID format
+            if not re.match(r'^dev\d{3}$', received_device_id):
+                print(f"Invalid device ID format: {received_device_id}")
+                return
+                
+            # Verify message is for this specific device
+            if received_device_id != self.device_id:
+                print(f"Received command for different device: {received_device_id}")
+                return
+            # ====== END OF VALIDATION ======
+
             # Parse incoming JSON payload
             command_data = json.loads(msg.payload.decode())
 
@@ -153,6 +174,11 @@ class IoTDevice:
                 client.publish(f"iot/devices/{self.device_id}/results", json.dumps(result_msg))
                 return
 
+            # future timestamp check
+            if command_timestamp > time.time() + 60:  # Allow 1m clock drift
+                print(f"Future-dated command rejected (Δ={command_timestamp-time.time():.1f}s)")
+                return
+            
             command = command_data.get('command') # Extract command field
 
             if not command: # Handle missing command field

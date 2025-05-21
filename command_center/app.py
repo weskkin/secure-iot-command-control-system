@@ -25,6 +25,12 @@ import base64
 from functools import wraps 
 from datetime import datetime
 from flask_wtf.csrf import CSRFProtect
+import re
+
+ALLOWED_COMMANDS = {
+    "temperature_sensor": ["read_temperature", "restart"],
+    "security_camera": ["activate", "deactivate", "restart", "status_check"]
+}
 
 # Initialize LoginManager
 login_manager = LoginManager()
@@ -45,7 +51,8 @@ talisman = Talisman(
         'default-src': "'self'",
         'style-src': ["'self'", "'unsafe-inline'"],
         'script-src': ["'self'", "'unsafe-inline'"]
-    }
+    },
+    referrer_policy='strict-origin-when-cross-origin' 
 )
 
 login_manager.init_app(app)
@@ -520,6 +527,33 @@ def send_command():
     if not device_id or not command:
         return jsonify({"status": "error", "message": "Missing device_id or command"}), 400
     
+    # Validate device ID format
+    if not re.match(r'^dev\d{3}$', device_id):
+        mqtt_app.add_audit_log("VALIDATION", 
+            f"Invalid device ID format: {device_id}", 
+            request.remote_addr)
+        return jsonify({"status": "error", "message": "Invalid device ID format"}), 400
+    
+    # ===== NEW COMMAND VALIDATION =====
+    # Get device info from registry
+    device_info = mqtt_app.get_devices().get(device_id)
+    if not device_info:
+        mqtt_app.add_audit_log("VALIDATION",
+            f"Unknown device: {device_id}",
+            current_user.username if current_user.is_authenticated else "ANONYMOUS")
+        return jsonify({"status": "error", "message": "Device not registered"}), 404
+
+    # Validate command against device type
+    device_type = device_info.get('type')
+    allowed = ALLOWED_COMMANDS.get(device_type, [])
+    
+    if command not in allowed:
+        mqtt_app.add_audit_log("VALIDATION",
+            f"Invalid command '{command}' for {device_id} ({device_type})",
+            current_user.username if current_user.is_authenticated else "ANONYMOUS")
+        return jsonify({"status": "error", "message": "Command not allowed for this device type"}), 400
+    # ===== END OF VALIDATION =====
+
     # Send command via MQTT
     success = mqtt_app.send_command(device_id, command)
     
@@ -535,6 +569,13 @@ def send_replay_command():
         device_id = request.form.get("device_id")
         command = request.form.get("command")
         timestamp = float(request.form.get("timestamp"))
+        
+        # Validate device ID format
+        if not re.match(r'^dev\d{3}$', device_id):
+            mqtt_app.add_audit_log("VALIDATION", 
+                f"Invalid device ID format: {device_id}", 
+                request.remote_addr)
+            return jsonify({"status": "error", "message": "Invalid device ID format"}), 400
         
         success = mqtt_app.send_command_with_timestamp(device_id, command, timestamp)
         

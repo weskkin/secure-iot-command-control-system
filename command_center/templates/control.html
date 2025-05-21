@@ -426,51 +426,55 @@
         
         // Function to send command to device
         async function sendCommand(deviceId) {
-            const commandSelect = document.getElementById('command-' + deviceId);
-            const customCommandInput = document.getElementById('custom-command-' + deviceId);
-            const resultDiv = document.getElementById('result-' + deviceId);
+            const commandSelect = document.getElementById(`command-${deviceId}`);
+            const customInput = document.getElementById(`custom-command-${deviceId}`);
+            const resultDiv = document.getElementById(`result-${deviceId}`);
             const sendBtn = event.target;
             
             let command = commandSelect.value;
             if (command === 'custom') {
-                command = customCommandInput.value.trim();
+                command = customInput.value.trim();
                 if (!command) {
                     showResult(deviceId, 'Please enter a custom command', 'error');
                     return;
                 }
             }
-            
-            // Disable button and show loading state
+
+            // Get CSRF token from meta tag
+            const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+
+            // Disable button and show loading
             sendBtn.disabled = true;
             sendBtn.textContent = '⏳ Sending...';
             showResult(deviceId, 'Sending command...', 'info');
-            
+
             try {
-                // Create form data for the request
-                const formData = new FormData();
-                formData.append('device_id', deviceId);
-                formData.append('command', command);
-                
-                // Send the command via AJAX
                 const response = await fetch('/api/send_command', {
                     method: 'POST',
-                    body: formData
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'X-CSRFToken': csrfToken  // Add CSRF token header
+                    },
+                    credentials: 'include',  // Important for cookies
+                    body: new URLSearchParams({
+                        device_id: deviceId,
+                        command: command,
+                        csrf_token: csrfToken  // For form-encoded POST
+                    })
                 });
-                
+
                 const data = await response.json();
-                
                 if (response.ok) {
-                    showResult(deviceId, data.message, data.status);
+                    showResult(deviceId, data.message, 'success');
                     addToCommandHistory(deviceId, command, 'success');
                 } else {
-                    showResult(deviceId, data.message || 'Unknown error occurred', 'error');
+                    showResult(deviceId, data.message || 'Unknown error', 'error');
                     addToCommandHistory(deviceId, command, 'error');
                 }
             } catch (error) {
-                showResult(deviceId, 'Network error: ' + error.message, 'error');
+                showResult(deviceId, `Network error: ${error.message}`, 'error');
                 addToCommandHistory(deviceId, command, 'error');
             } finally {
-                // Re-enable button
                 sendBtn.disabled = false;
                 sendBtn.textContent = '📨 Send';
             }

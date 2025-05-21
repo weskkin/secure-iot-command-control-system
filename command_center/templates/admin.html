@@ -20,6 +20,11 @@
             border-left: 4px solid #dc3545 !important;
             font-weight: bold;
         }
+        .validation-alert {
+            background-color: #fff3cd !important;
+            border-left: 4px solid #ffc107 !important;
+            font-weight: bold;
+        }
     </style>
 </head>
 <body>
@@ -56,7 +61,7 @@
             </thead>
             <tbody>
                 {% for log in logs %}
-                <tr class="{% if log.event_type == 'SECURITY' %}security-alert{% endif %}">
+                <<tr class="{% if log.event_type == 'SECURITY' %}security-alert{% elif log.event_type == 'VALIDATION' %}validation-alert{% endif %}">
                     <td>{{ log.timestamp }}</td>
                     <td>{{ log.event_type }}</td>
                     <td>{{ log.details }}</td>
