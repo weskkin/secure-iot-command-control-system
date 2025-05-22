@@ -602,3 +602,31 @@ a:hover {
     font-size: 0.9em;
     margin: 5px 0;
 }
+
+/* User Role Management */
+.role-update-form {
+    margin: 2rem 0;
+    padding: 1.5rem;
+    border: 1px solid #eee;
+    border-radius: 8px;
+    background: #f8f9fa;
+}
+
+.role-update-form select {
+    width: 100%;
+    padding: 8px;
+    margin: 8px 0;
+}
+
+.current-users table {
+    width: 100%;
+    margin: 1rem 0;
+    border-collapse: collapse;
+}
+
+.current-users th, 
+.current-users td {
+    padding: 12px;
+    text-align: left;
+    border-bottom: 1px solid #ddd;
+}

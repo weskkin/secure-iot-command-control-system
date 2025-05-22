@@ -38,6 +38,14 @@ from service_identity import pyopenssl
 
 load_dotenv()  # Load .env file
 
+# Define role hierarchy
+ROLES = {
+    "viewer": 1,
+    "operator": 2,
+    "admin": 3
+}
+VALID_ROLES = ["viewer", "operator", "admin"]
+
 ALLOWED_COMMANDS = {
     "temperature_sensor": ["read_temperature", "restart"],
     "security_camera": ["activate", "deactivate", "restart", "status_check"]
@@ -93,6 +101,11 @@ def validate_password(password):
 class User(UserMixin):
     def __init__(self, id, username, role, totp_secret=None, 
                  mfa_enabled=False, backup_codes='[]'):
+        
+        # Validate role during initialization
+        if role not in VALID_ROLES:
+            raise ValueError(f"Invalid role: {role}")
+        
         self.id = id
         self.username = username
         self.role = role
@@ -100,6 +113,10 @@ class User(UserMixin):
         self.mfa_enabled = mfa_enabled
         self.backup_codes = backup_codes
 
+    def has_permission(self, required_role):
+        """Check if user's role meets minimum required level"""
+        return ROLES[self.role] >= ROLES[required_role]
+    
     def verify_totp(self, code):
         return pyotp.TOTP(self.totp_secret).verify(code, valid_window=1)
     
@@ -145,7 +162,7 @@ def init_db():
             id INTEGER PRIMARY KEY, 
             username TEXT UNIQUE,
             password_hash TEXT,
-            role TEXT NOT NULL DEFAULT 'operator',
+            role TEXT NOT NULL DEFAULT 'operator' CHECK (role IN ('viewer', 'operator', 'admin')),
             last_login REAL,
             totp_secret TEXT DEFAULT '',
             mfa_enabled BOOLEAN DEFAULT 0,
@@ -772,30 +789,81 @@ def logout():
 @app.route('/admin')
 @admin_required
 def admin_panel():
-    # Get active users (users logged in within last 15 minutes)
-    active_users = 0
+    # Get all users with detailed information
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM users WHERE last_login > ?", 
-             (datetime.now().timestamp() - 900,))
-    active_users = c.fetchone()[0]
+    
+    # Get active users count and all user data in one query
+    c.execute('''
+        SELECT id, username, role, last_login 
+        FROM users
+        ORDER BY username
+    ''')
+    
+    users = []
+    active_users = 0
+    current_time = datetime.now().timestamp()
+    
+    for row in c.fetchall():
+        last_login = datetime.fromtimestamp(row[3]).strftime("%Y-%m-%d %H:%M") if row[3] else "Never"
+        is_active = (current_time - row[3]) < 900 if row[3] else False
+        
+        users.append({
+            "id": row[0],
+            "username": row[1],
+            "role": row[2],
+            "last_login": last_login,
+            "active": is_active
+        })
+        
+        if is_active:
+            active_users += 1
+    
     conn.close()
 
-    # Format timestamps for display
+    # Format audit logs
     formatted_logs = []
-    for log in mqtt_app.audit_logs[-50:]:  # Last 50 entries
+    for log in mqtt_app.audit_logs[-50:]:
         formatted = log.copy()
         formatted["timestamp"] = datetime.strptime(
             log["timestamp"], "%Y-%m-%d %H:%M:%S"
-        ).strftime("%H:%M:%S")  # Show only time
+        ).strftime("%H:%M:%S")
         formatted_logs.append(formatted)
     
     return render_template('admin.html',
                          devices=mqtt_app.get_devices(),
                          active_users=active_users,
-                         logs=formatted_logs) 
+                         logs=formatted_logs,
+                         all_users=users,  # Pass full user list to template
+                         roles=["viewer", "operator", "admin"])  # Pass valid roles
+
+@app.route('/admin/update_role', methods=['POST'])
+@admin_required
+def update_user_role():
+    target_user = request.form.get('username')
+    new_role = request.form.get('role')
+    
+    if new_role not in VALID_ROLES:
+        flash('Invalid role specified')
+        return redirect(url_for('admin_panel'))
+
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        c = conn.cursor()
+        c.execute('''
+            UPDATE users SET role = ? WHERE username = ?
+        ''', (new_role, target_user))
+        conn.commit()
+        flash(f'Updated {target_user} role to {new_role}')
+    except sqlite3.Error as e:
+        flash(f'Error updating role: {str(e)}')
+    finally:
+        conn.close()
+    
+    return redirect(url_for('admin_panel'))
 
 @app.route('/api/send_command', methods=['POST'])
+@login_required
 def send_command():
     device_id = request.form.get("device_id")
     command = request.form.get("command")
@@ -829,6 +897,31 @@ def send_command():
             current_user.username if current_user.is_authenticated else "ANONYMOUS")
         return jsonify({"status": "error", "message": "Command not allowed for this device type"}), 400
     # ===== END OF VALIDATION =====
+
+    # ===== AUTHORIZATION CHECKS =====
+    # Define critical commands that require admin privileges
+    RESTRICTED_COMMANDS = {"restart", "shutdown", "firmware_update"}
+    
+    # Check if command requires admin privileges
+    if command in RESTRICTED_COMMANDS and current_user.role != "admin":
+        mqtt_app.add_audit_log("AUTHORIZATION",
+            f"Unauthorized attempt to send restricted command '{command}' to {device_id}",
+            current_user.username)
+        return jsonify({
+            "status": "error",
+            "message": "Admin privileges required for this command"
+        }), 403
+
+    # Additional role-based validation
+    if current_user.role == "viewer":
+        mqtt_app.add_audit_log("AUTHORIZATION",
+            f"Viewer role attempted command '{command}' on {device_id}",
+            current_user.username)
+        return jsonify({
+            "status": "error",
+            "message": "Read-only accounts cannot send commands"
+        }), 403
+    # ===== END OF AUTHORIZATION CHECKS =====
 
     # Send command via MQTT
     success = mqtt_app.send_command(device_id, command)
