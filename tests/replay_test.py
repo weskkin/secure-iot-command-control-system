@@ -1,6 +1,6 @@
 import requests
 import time
-from bs4 import BeautifulSoup  # Add this import
+from bs4 import BeautifulSoup
 
 requests.packages.urllib3.disable_warnings()
 
@@ -11,14 +11,10 @@ login_url = "https://localhost:5000/login"
 # Get login page HTML
 login_get = session.get(login_url, verify=False)
 soup = BeautifulSoup(login_get.text, 'html.parser')
-
-# Extract CSRF token from hidden input field
 csrf_token = soup.find('input', {'name': 'csrf_token'})['value']
 
-print(f"=== Extracted CSRF Token: {csrf_token} ===")
-
-# 2. Perform login with CSRF token
-login_response = session.post(
+# 2. Perform login
+session.post(
     login_url,
     data={
         "username": "admin",
@@ -34,17 +30,18 @@ protected_page = session.get("https://localhost:5000/control", verify=False)
 soup = BeautifulSoup(protected_page.text, 'html.parser')
 new_csrf_token = soup.find('meta', {'name': 'csrf-token'})['content']
 
-print(f"=== New CSRF Token: {new_csrf_token} ===")
-
-# 4. Send replay command with latest CSRF token
+# 4. Send replay command with proper device ID and timestamp
 replay_url = "https://localhost:5000/api/send_replay"
-timestamp = time.time() - 310
+device_id = "device_001"  # Updated device ID format
+command = "status_check"
+# >= 30 s violation
+timestamp = time.time() - 30
 
-replay_response = session.post(
+response = session.post(
     replay_url,
     data={
-        "device_id": "dev001",
-        "command": "status_check",
+        "device_id": device_id,
+        "command": command,
         "timestamp": str(timestamp),
         "csrf_token": new_csrf_token
     },
@@ -55,6 +52,6 @@ replay_response = session.post(
     verify=False
 )
 
-print("\n=== Final Response ===")
-print("Status Code:", replay_response.status_code)
-print("Response:", replay_response.text)
+print("\n=== Replay Test Results ===")
+print("Status Code:", response.status_code)
+print("Response:", response.text)

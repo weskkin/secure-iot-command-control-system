@@ -520,6 +520,7 @@ class MQTTIntegratedApp:
             "details": details,
             "source": source
         }
+        print(f"Adding audit log: {log_entry}")
         self.audit_logs.append(log_entry)
         # Keep log size under limit
         if len(self.audit_logs) > self.max_log_entries:
@@ -853,7 +854,7 @@ def send_replay_command():
         timestamp = float(request.form.get("timestamp"))
         
         # Validate device ID format
-        if not re.match(r'^dev\d{3}$', device_id):
+        if not re.match(r'^device_\d{3}$', device_id):
             mqtt_app.add_audit_log("VALIDATION", 
                 f"Invalid device ID format: {device_id}", 
                 request.remote_addr)

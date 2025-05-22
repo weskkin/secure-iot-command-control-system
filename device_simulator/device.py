@@ -135,7 +135,7 @@ class IoTDevice:
             received_device_id = topic_parts[2]
             
             # Validate device ID format
-            if not re.match(r'^dev\d{3}$', received_device_id):
+            if not re.match(r'^device_\d{3}$', received_device_id):
                 print(f"Invalid device ID format: {received_device_id}")
                 return
                 
