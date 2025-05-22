@@ -2,18 +2,24 @@
 {% block title %}Backup Code Recovery{% endblock %}
 
 {% block content %}
-  <h1>🔑 Use Backup Code</h1>
-  <form method="POST">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="form-group">
-      <label>Enter Backup Code:</label>
-      <input type="text" name="code" required 
-       placeholder="XXXX-XXXX" 
-       pattern="[a-f0-9]{4}-[a-f0-9{4}|[a-f0-9]{8}">
+<div class="container small">
+    <div class="header simple">
+        <h1>🔑 Use Backup Code</h1>
     </div>
-    <button type="submit">Verify Backup Code</button>
-  </form>
-  <p class="text-muted">
-    Format: 8-character code (e.g. 1a3b-5c7d)
-  </p>
+    
+    <form method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="form-group">
+            <label>Enter Backup Code:</label>
+            <input type="text" name="code" required 
+                   placeholder="XXXX-XXXX" 
+                   pattern="[a-f0-9]{4}-[a-f0-9]{4}|[a-f0-9]{8}">
+        </div>
+        <button type="submit">Verify Backup Code</button>
+    </form>
+    
+    <p class="text-muted text-center" style="margin-top: 15px;">
+        Format: 8-character code (e.g. 1a3b-5c7d)
+    </p>
+</div>
 {% endblock %}

@@ -1,13 +1,19 @@
 {% extends "base.html" %}
 {% block content %}
-  <h1>🔒 Enable MFA</h1>
-  <div class="mfa-setup">
-    <p>Scan this QR code with Google Authenticator:</p>
-    <img src="{{ url_for('static', filename='mfa_qr.png') }}" width="200">
-    <form method="POST" action="{{ url_for('verify_mfa') }}">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-        <input type="number" name="code" placeholder="Enter 6-digit code" required>
-        <button type="submit">Verify</button>
-    </form>
-  </div>
+<div class="container small">
+    <div class="header simple">
+        <h1>🔒 Enable MFA</h1>
+    </div>
+    
+    <div class="mfa-setup">
+        <p>Scan this QR code with Google Authenticator:</p>
+        <img src="{{ url_for('static', filename='mfa_qr.png') }}" width="200">
+        
+        <form method="POST" action="{{ url_for('verify_mfa') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <input type="number" name="code" placeholder="Enter 6-digit code" required>
+            <button type="submit">Verify</button>
+        </form>
+    </div>
+</div>
 {% endblock %}

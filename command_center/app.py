@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, jso
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import os
+from pathlib import Path
 import json
 import time
 import threading
@@ -608,7 +609,11 @@ def enable_mfa():
     
     # Generate QR code
     img = qrcode.make(totp_uri)
-    img.save("command_center/static/mfa_qr.png")
+    project_root = Path(__file__).parent.absolute()
+    static_dir = project_root / "static"
+    static_dir.mkdir(exist_ok=True, parents=True)  # Create directory if needed
+    qr_path = static_dir / "mfa_qr.png"
+    img.save(qr_path)
     
     return render_template('enable_mfa.html')
 

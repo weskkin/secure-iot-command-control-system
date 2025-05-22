@@ -1,16 +1,30 @@
 {% extends "base.html" %}
-{% block title %}Backup Codes{% endblock %}
+{% block title %}Backup Codes - Secure IoT Command Center{% endblock %}
 
 {% block content %}
-  <h1>🔑 Backup Codes</h1>
-  <div class="backup-codes">
-    <p>Store these codes securely:</p>
-    <div class="code-list">
-      {% for code in codes %}
-        <div class="code-item">{{ code }}</div>
-      {% endfor %}
+<div class="container medium">
+    <div class="header simple">
+        <h1>🔑 Backup Codes</h1>
     </div>
-    <p class="warning">⚠️ These codes will only be shown once!</p>
-    <a href="/control" class="btn">Return to Control Panel</a>
-  </div>
+    
+    <div class="backup-codes">
+        <p><strong>Store these codes securely:</strong></p>
+        <p class="text-muted">Use these codes if you lose access to your authenticator app. Each code can only be used once.</p>
+        
+        <div class="code-list">
+            {% for code in codes %}
+                <div class="code-item">{{ code }}</div>
+            {% endfor %}
+        </div>
+        
+        <div class="warning">
+            ⚠️ These codes will only be shown once! Save them in a secure location.
+        </div>
+        
+        <div class="nav-buttons">
+            <a href="/control" class="btn">🎮 Continue to Control Panel</a>
+            <a href="/" class="btn">🏠 Back to Home</a>
+        </div>
+    </div>
+</div>
 {% endblock %}

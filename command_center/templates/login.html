@@ -4,20 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login - Secure IoT Command Center</title>
-    <style>
-        /* Reuse styles from index.html */
-        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
-        .container { max-width: 400px; margin: 50px auto; background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .header { text-align: center; margin-bottom: 25px; }
-        input[type="text"], input[type="password"] { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ddd; border-radius: 4px; }
-        button { background-color: #007bff; color: white; border: none; padding: 12px 20px; border-radius: 4px; cursor: pointer; width: 100%; }
-        .flash-message { color: #dc3545; margin: 10px 0; text-align: center; }
-        a { color: #007bff; text-decoration: none; }
-    </style>
+    <link rel="stylesheet" href="/static/css/styles.css">
 </head>
 <body>
-    <div class="container">
-        <div class="header">
+    <div class="container small">
+        <div class="header simple">
             <h1>🔒 Login</h1>
         </div>
 
@@ -37,7 +28,7 @@
             <button type="submit">Login</button>
         </form>
 
-        <p style="text-align: center; margin-top: 15px;">
+        <p class="text-center" style="margin-top: 15px;">
             Don't have an account? <a href="/register">Register here</a>
         </p>
     </div>
