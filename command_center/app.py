@@ -33,6 +33,8 @@ from dotenv import load_dotenv
 import pyotp
 import qrcode
 import secrets
+from OpenSSL import SSL  
+from service_identity import pyopenssl
 
 load_dotenv()  # Load .env file
 
@@ -209,7 +211,8 @@ class MQTTIntegratedApp:
         self.ca_cert = os.path.join(self.project_root, "certificates/ca/intermediate/certs/ca-chain.cert.pem")
         self.center_cert = os.path.join(self.project_root, "certificates/ca/intermediate/certs/client-chain.cert.pem")
         self.center_key = os.path.join(self.project_root, "certificates/ca/intermediate/private/command_center.key.pem")
-        
+        self.crl = os.path.join(self.project_root, "certificates/crl/intermediate.crl.pem")
+
         # Verify certificate files exist
         self._verify_certificates()
         
@@ -268,49 +271,33 @@ class MQTTIntegratedApp:
         print("Setting up MQTT connection...")
         
         try:
-            # Create MQTT client with unique ID
-            client = mqtt.Client(client_id="flask_command_center", callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
-            # For debugging
-            client.on_log = lambda client, userdata, level, buf: print("MQTT LOG:", buf)
-
-            # callbacks
-            client.on_connect = self._on_connect
-            client.on_message = self._on_message
-            client.on_disconnect = self._on_disconnect
-            
-            # Configure TLS/SSL for TLS 1.3
-            print("Configuring TLS certificates...")
-
-            # Create SSL context for TLS 1.3
+            # TEMPORARY WORKAROUND - Remove CRL checks
             context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-            context.check_hostname = True  # Enable hostname checking
-            context.verify_mode = ssl.CERT_REQUIRED
-            
-            # Set minimum TLS version to 1.3
             context.minimum_version = ssl.TLSVersion.TLSv1_3
             context.maximum_version = ssl.TLSVersion.TLSv1_3
-
-            # Load certificates
             context.load_verify_locations(self.ca_cert)
             context.load_cert_chain(self.center_cert, self.center_key)
 
-            # Set the SSL context
+            client = mqtt.Client(client_id="flask_command_center", 
+                               callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+            
+            # Configure TLS without CRL
             client.tls_set_context(context)
             
-            # Set TLS options
-            client.tls_insecure_set(False)
-            
-            # Connect to broker
+            # Keep existing callbacks
+            client.on_log = lambda client, userdata, level, buf: print("MQTT LOG:", buf)
+            client.on_connect = self._on_connect
+            client.on_message = self._on_message
+            client.on_disconnect = self._on_disconnect
+
             print("Connecting to MQTT broker on port 8883 with TLS 1.3 ...")
             client.connect("localhost", 8883, 60)
             
-            # Store client reference
             with self.connection_lock:
                 self.mqtt_client = client
             
-            # Start MQTT loop
             client.loop_forever()
-            
+
         except Exception as e:
             print(f"Error setting up MQTT connection: {str(e)}")
             with self.connection_lock:
@@ -526,6 +513,12 @@ class MQTTIntegratedApp:
         if len(self.audit_logs) > self.max_log_entries:
             self.audit_logs.pop(0)
 
+    def _verify_callback(self, conn, cert, errnum, depth, ok):
+        """Custom certificate verification callback"""
+        if not ok:
+            print(f"Certificate verification failed: {cert.get_subject()}")
+        return ok
+    
 # Create global instance
 mqtt_app = MQTTIntegratedApp()
 

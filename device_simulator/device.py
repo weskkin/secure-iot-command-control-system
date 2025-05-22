@@ -30,10 +30,12 @@ class IoTDevice:
         # Get the absolute path to this script's directory
         base_dir = Path(__file__).parent.absolute()
         
-        # TLS certificate paths - Update these paths
+        
+        # TLS certificate paths - 
         self.ca_cert = base_dir / "ca-chain.cert.pem"
         self.device_cert = base_dir / "device_certs/device_001-chain.cert.pem"
         self.device_key = base_dir / "device_certs/device_001.key.pem"
+        self.crl = Path(__file__).parent.parent / "certificates/crl/intermediate.crl.pem"
 
         print(f"CA Path: {self.ca_cert}")
         print(f"Device Cert Path: {self.device_cert}")
@@ -225,44 +227,27 @@ class IoTDevice:
         print(f"Device {self.device_id} connecting to secure MQTT broker ...")
 
         try:
-            # Create an MQTT client instance with a unique ID
-            client = mqtt.Client(client_id=f"{self.device_id}", callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
-
-            # Assign callback functions
-            client.on_connect = self.on_connect
-            client.on_message = self.on_message
-
-            # Configure TLS/SSL for TLS 1.3
-            print("Configuring TLS 1.3 certificates...")
-            
-            # Create SSL context for TLS 1.3
+            # Create SSL context without CRL checks
             context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-            context.check_hostname = True  # Enable hostname checking
-            context.verify_mode = ssl.CERT_REQUIRED
-            
-            # Set minimum TLS version to 1.3
             context.minimum_version = ssl.TLSVersion.TLSv1_3
             context.maximum_version = ssl.TLSVersion.TLSv1_3
-            
-            # Load certificates
             context.load_verify_locations(self.ca_cert)
             context.load_cert_chain(self.device_cert, self.device_key)
-            
-            # Set the SSL context
+    
+            client = mqtt.Client(client_id=self.device_id, 
+                            callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
             client.tls_set_context(context)
-
-            # Set TLS options
-            client.tls_insecure_set(False)
-
-            # Connect to the broker running on localhost at port 8883
+            
+            # Keep existing callbacks
+            client.on_connect = self.on_connect
+            client.on_message = self.on_message
+            
             print("Connecting to broker on port 8883 with TLS 1.3 ...")
             client.connect("localhost", 8883, 60)
-
-            self.mqtt_client = client # Store the client instance
-            
             return client
+
         except Exception as e:
-            print(f"Error setting up TLS 1.3 connection: {str(e)}")
+            print(f"Error connecting to broker: {str(e)}")
             return None
 
     def process_command(self, command):
