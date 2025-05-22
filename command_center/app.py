@@ -85,7 +85,7 @@ talisman = Talisman(
         ],
         'frame-ancestors': "'none'"
     },
-    content_security_policy_nonce_in=['script-src']
+    content_security_policy_nonce_in=['script-src'],
 )
 
 # Initialize Flask-Login with secure settings
@@ -720,7 +720,7 @@ def verify_login():
         user = load_user(user_id)
         code = request.form.get('code')
         
-        if user.verify_totp(code) or user.verify_backup_code(code):
+        if user.verify_totp(code) or user.check_backup_code(code):
             login_user(user)
             session.pop('mfa_pending_user')
             return redirect(url_for('control'))
