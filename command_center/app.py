@@ -206,7 +206,7 @@ class MQTTIntegratedApp:
         # Get project root path
         self.project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-        self.ca_cert = os.path.join(self.project_root, "certificates/ca/certs/ca.cert.pem")
+        self.ca_cert = os.path.join(self.project_root, "certificates/ca/intermediate/certs/ca-chain.cert.pem")
         self.center_cert = os.path.join(self.project_root, "certificates/ca/intermediate/certs/client-chain.cert.pem")
         self.center_key = os.path.join(self.project_root, "certificates/ca/intermediate/private/command_center.key.pem")
         
@@ -278,22 +278,30 @@ class MQTTIntegratedApp:
             client.on_message = self._on_message
             client.on_disconnect = self._on_disconnect
             
-            # Configure TLS/SSL
+            # Configure TLS/SSL for TLS 1.3
             print("Configuring TLS certificates...")
-            client.tls_set(
-                ca_certs=self.ca_cert,
-                certfile=self.center_cert,
-                keyfile=self.center_key,
-                cert_reqs=ssl.CERT_REQUIRED,
-                tls_version=ssl.PROTOCOL_TLSv1_2,  # Explicit TLS 1.2
-                ciphers='ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384'
-            )
+
+            # Create SSL context for TLS 1.3
+            context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+            context.check_hostname = True  # Enable hostname checking
+            context.verify_mode = ssl.CERT_REQUIRED
+            
+            # Set minimum TLS version to 1.3
+            context.minimum_version = ssl.TLSVersion.TLSv1_3
+            context.maximum_version = ssl.TLSVersion.TLSv1_3
+
+            # Load certificates
+            context.load_verify_locations(self.ca_cert)
+            context.load_cert_chain(self.center_cert, self.center_key)
+
+            # Set the SSL context
+            client.tls_set_context(context)
             
             # Set TLS options
             client.tls_insecure_set(False)
             
             # Connect to broker
-            print("Connecting to MQTT broker on port 8883...")
+            print("Connecting to MQTT broker on port 8883 with TLS 1.3 ...")
             client.connect("localhost", 8883, 60)
             
             # Store client reference
@@ -802,7 +810,7 @@ def send_command():
         return jsonify({"status": "error", "message": "Missing device_id or command"}), 400
     
     # Validate device ID format
-    if not re.match(r'^dev\d{3}$', device_id):
+    if not re.match(r'^device_\d{3}$', device_id):
         mqtt_app.add_audit_log("VALIDATION", 
             f"Invalid device ID format: {device_id}", 
             request.remote_addr)
@@ -876,11 +884,17 @@ if __name__ == '__main__':
     # Get project root path (command_center's parent directory)
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
-    ssl_context = (
+    # Create SSL context for TLS 1.3
+    ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    ssl_context.minimum_version = ssl.TLSVersion.TLSv1_3
+    ssl_context.maximum_version = ssl.TLSVersion.TLSv1_3
+    
+    # Load certificate chain and key
+    ssl_context.load_cert_chain(
         os.path.join(project_root, "certificates/ca/intermediate/certs/flask-web-chain.cert.pem"),
         os.path.join(project_root, "certificates/ca/intermediate/private/flask-web.key.pem")
     )
 
-    print("Starting Flask application with integrated MQTT...")
+    print("Starting Flask application with integrated MQTT using TLS 1.3 ...")
     print(f"SSL Context: {ssl_context}")
     app.run(host="localhost", port=5000, debug=True, ssl_context=ssl_context, use_reloader=False)

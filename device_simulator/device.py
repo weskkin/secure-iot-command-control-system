@@ -31,7 +31,7 @@ class IoTDevice:
         base_dir = Path(__file__).parent.absolute()
         
         # TLS certificate paths - Update these paths
-        self.ca_cert = base_dir / "ca.cert.pem"
+        self.ca_cert = base_dir / "ca-chain.cert.pem"
         self.device_cert = base_dir / "device_certs/device_001-chain.cert.pem"
         self.device_key = base_dir / "device_certs/device_001.key.pem"
 
@@ -96,14 +96,14 @@ class IoTDevice:
             print(f"Device {self.device_id} connected to MQTT broker securely (TLS)") #Connection status
             self.connected = True
             
-            # Subscribe to a topic to receive commands (e.g., "iot/devices/dev001/commands")
+            # Subscribe to a topic to receive commands (e.g., "iot/devices/device_001/commands")
             command_topic = f"iot/devices/{self.device_id}/commands"
             client.subscribe(command_topic) # Subscribe to the topic
             print(f"Subscribed to {command_topic}") #Confirmation
 
             self.status = "online" # Update device status
 
-            # Publish a JSON status message to the broker (e.g., "iot/devices/dev001/status")
+            # Publish a JSON status message to the broker (e.g., "iot/devices/device_001/status")
             status_msg = {
                 "device_id": self.device_id,
                 "type": self.device_type,
@@ -198,7 +198,7 @@ class IoTDevice:
             # Execute the command (e.g., read a sensor)
             result = self.process_command(command) # Call processing logic
 
-            # Publish the result to a results topic (e.g., "iot/devices/dev001/results")
+            # Publish the result to a results topic (e.g., "iot/devices/device_001/results")
             result_msg = {
                 "device_id": self.device_id,
                 "command": command,
@@ -226,35 +226,43 @@ class IoTDevice:
 
         try:
             # Create an MQTT client instance with a unique ID
-            client = mqtt.Client(client_id=f"device_{self.device_id}", callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+            client = mqtt.Client(client_id=f"{self.device_id}", callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
 
             # Assign callback functions
             client.on_connect = self.on_connect
             client.on_message = self.on_message
 
-            # Configure TLS/SSL
-            print("Configuring TLS certificates...")
-            client.tls_set(
-                ca_certs=self.ca_cert,
-                certfile=self.device_cert,
-                keyfile=self.device_key,
-                cert_reqs=ssl.CERT_REQUIRED,
-                tls_version=ssl.PROTOCOL_TLSv1_2,
-                ciphers='ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384'
-            )
+            # Configure TLS/SSL for TLS 1.3
+            print("Configuring TLS 1.3 certificates...")
+            
+            # Create SSL context for TLS 1.3
+            context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+            context.check_hostname = True  # Enable hostname checking
+            context.verify_mode = ssl.CERT_REQUIRED
+            
+            # Set minimum TLS version to 1.3
+            context.minimum_version = ssl.TLSVersion.TLSv1_3
+            context.maximum_version = ssl.TLSVersion.TLSv1_3
+            
+            # Load certificates
+            context.load_verify_locations(self.ca_cert)
+            context.load_cert_chain(self.device_cert, self.device_key)
+            
+            # Set the SSL context
+            client.tls_set_context(context)
 
             # Set TLS options
             client.tls_insecure_set(False)
 
             # Connect to the broker running on localhost at port 8883
-            print("Connecting to broker on port 8883...")
+            print("Connecting to broker on port 8883 with TLS 1.3 ...")
             client.connect("localhost", 8883, 60)
 
             self.mqtt_client = client # Store the client instance
             
             return client
         except Exception as e:
-            print(f"Error setting up TLS connection: {str(e)}")
+            print(f"Error setting up TLS 1.3 connection: {str(e)}")
             return None
 
     def process_command(self, command):
@@ -296,7 +304,7 @@ if __name__ == "__main__":
 
     try:
         # Create a test device
-        device = IoTDevice("dev001", "temperature_sensor")
+        device = IoTDevice("device_001", "temperature_sensor")
 
         # Connect to MQTT broker and get the client instance
         client = device.connect()
