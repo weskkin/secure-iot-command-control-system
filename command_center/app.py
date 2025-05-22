@@ -86,6 +86,15 @@ talisman = Talisman(
         'frame-ancestors': "'none'"
     },
     content_security_policy_nonce_in=['script-src'],
+    force_https=True,
+    strict_transport_security=True,
+    strict_transport_security_max_age=31536000,
+    frame_options='DENY',
+    referrer_policy='strict-origin-when-cross-origin',
+    feature_policy={
+        'geolocation': "'none'",
+        'camera': "'none'"
+    }
 )
 
 # Initialize Flask-Login with secure settings
