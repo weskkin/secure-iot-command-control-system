@@ -1,133 +1,107 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Secure IoT Command Center</title>
-    <link rel="stylesheet" href="/static/css/styles.css">
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🔒 Secure IoT Command Center</h1>
-            <p>Central control system for IoT device management</p>
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <div class="header">
+        <h1>🔒 Secure IoT Command Center</h1>
+        <p>Central control system for IoT device management</p>
+    </div>
+
+    <div id="connectionStatus" class="status-card">
+        <h3>
+            <span id="statusIndicator" class="status-indicator"></span>
+            MQTT Connection Status
+        </h3>
+        <p id="statusText">Checking connection...</p>
+        <div class="last-updated" id="lastUpdated"></div>
+    </div>
+
+    <div class="info-grid">
+        <div class="info-card">
+            <h3>📊 System Overview</h3>
+            <p><strong>Connected Devices:</strong> <span id="deviceCount">-</span></p>
+            <p><strong>Security Protocol:</strong> TLS 1.3 with Mutual Authentication</p>
+            <p><strong>Message Protocol:</strong> MQTT over SSL/TLS</p>
         </div>
 
-        <div id="connectionStatus" class="status-card">
-            <h3>
-                <span id="statusIndicator" class="status-indicator"></span>
-                MQTT Connection Status
-            </h3>
-            <p id="statusText">Checking connection...</p>
-            <div class="last-updated" id="lastUpdated"></div>
+        <div class="info-card">
+            <h3>🔐 Security Features</h3>
+            <ul>
+                <li>End-to-end encryption</li>
+                <li>Mutual certificate authentication</li>
+                <li>Message integrity validation</li>
+                <li>Secure command channels</li>
+            </ul>
         </div>
 
-        <div class="info-grid">
-            <div class="info-card">
-                <h3>📊 System Overview</h3>
-                <p><strong>Connected Devices:</strong> <span id="deviceCount">-</span></p>
-                <p><strong>Security Protocol:</strong> TLS 1.2 with Mutual Authentication</p>
-                <p><strong>Message Protocol:</strong> MQTT over SSL/TLS</p>
-            </div>
-
-            <div class="info-card">
-                <h3>🔐 Security Features</h3>
-                <ul>
-                    <li>End-to-end encryption (TLS 1.2)</li>
-                    <li>Mutual certificate authentication</li>
-                    <li>Message integrity validation</li>
-                    <li>Secure command channels</li>
-                </ul>
-            </div>
-
-            <div class="info-card">
-                <h3>⚡ System Capabilities</h3>
-                <ul>
-                    <li>Real-time device monitoring</li>
-                    <li>Secure command dispatch</li>
-                    <li>Status acknowledgments</li>
-                    <li>Connection health tracking</li>
-                </ul>
-            </div>
-        </div>
-
-        <div class="nav-buttons">
-            <a href="/control" id="controlLink">
-                🎮 Device Control Panel
-            </a>
-            <a href="javascript:void(0)" onclick="refreshStatus()" class="success">
-                🔄 Refresh Status
-            </a>
-            {% if current_user.is_authenticated %}
-                <a href="/logout">🚪 Logout</a>
-            {% else %}
-                <a href="/login">🔑 Login</a>
-            {% endif %}
-        </div>
-
-        <div class="refresh-note">
-            Status updates automatically every 5 seconds
+        <div class="info-card">
+            <h3>⚡ System Capabilities</h3>
+            <ul>
+                <li>Real-time monitoring</li>
+                <li>Secure command dispatch</li>
+                <li>Status acknowledgments</li>
+                <li>Connection health tracking</li>
+            </ul>
         </div>
     </div>
 
-    <script>
-        // Function to update status display
-        function updateStatusDisplay(isConnected, deviceCount) {
-            const statusCard = document.getElementById('connectionStatus');
-            const statusIndicator = document.getElementById('statusIndicator');
-            const statusText = document.getElementById('statusText');
-            const deviceCountSpan = document.getElementById('deviceCount');
-            const controlLink = document.getElementById('controlLink');
-            const lastUpdated = document.getElementById('lastUpdated');
+    <div class="nav-buttons">
+        <a href="/control" id="controlLink">🎮 Device Control Panel</a>
+        <button class="refresh-btn success" id="refreshStatusBtn">🔄 Refresh Status</button>
+        {% if current_user.is_authenticated %}
+            <a href="/logout" class="btn">🚪 Logout</a>
+        {% else %}
+            <a href="/login" class="btn">🔑 Login</a>
+        {% endif %}
+    </div>
 
-            // Update device count
-            deviceCountSpan.textContent = deviceCount || 0;
+    <div class="refresh-note">
+        Status updates automatically every 5 seconds
+    </div>
+</div>
+{% endblock %}
 
-            // Update last updated time
-            lastUpdated.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+{% block scripts %}
+<script nonce="{{ csp_nonce() }}">
+    function updateStatusDisplay(isConnected, deviceCount) {
+        const statusCard = document.getElementById('connectionStatus');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const statusText = document.getElementById('statusText');
+        const deviceCountSpan = document.getElementById('deviceCount');
+        const controlLink = document.getElementById('controlLink');
 
-            if (isConnected) {
-                statusCard.className = 'status-card status-connected';
-                statusIndicator.className = 'status-indicator indicator-green';
-                statusText.textContent = '✅ Connected to MQTT broker securely';
-                controlLink.className = '';
-                controlLink.style.pointerEvents = 'auto';
-            } else {
-                statusCard.className = 'status-card status-disconnected';
-                statusIndicator.className = 'status-indicator indicator-red';
-                statusText.textContent = '❌ Disconnected from MQTT broker';
-                controlLink.className = 'disabled';
-                controlLink.style.pointerEvents = 'none';
-            }
+        deviceCountSpan.textContent = deviceCount || 0;
+        document.getElementById('lastUpdated').textContent = 
+            `Last updated: ${new Date().toLocaleTimeString()}`;
+
+        if (isConnected) {
+            statusCard.className = 'status-card status-connected';
+            statusIndicator.className = 'status-indicator indicator-green';
+            statusText.textContent = '✅ Connected securely to MQTT broker';
+            controlLink.style.pointerEvents = 'auto';
+        } else {
+            statusCard.className = 'status-card status-disconnected';
+            statusIndicator.className = 'status-indicator indicator-red';
+            statusText.textContent = '❌ Disconnected from MQTT broker';
+            controlLink.style.pointerEvents = 'none';
         }
+    }
 
-        // Function to check status
-        async function checkStatus() {
-            try {
-                const response = await fetch('/api/status');
-                const data = await response.json();
-                updateStatusDisplay(data.mqtt_connected, data.device_count);
-
-                // Device count update
-                document.getElementById('deviceCount').textContent = 
-                data.device_count + (data.device_count === 1 ? ' device' : ' devices');
-
-            } catch (error) {
-                console.error('Error checking status:', error);
-                updateStatusDisplay(false, 0);
-            }
+    async function checkStatus() {
+        try {
+            const response = await fetch('/api/status');
+            const data = await response.json();
+            updateStatusDisplay(data.mqtt_connected, data.device_count);
+        } catch (error) {
+            console.error('Status check failed:', error);
+            updateStatusDisplay(false, 0);
         }
+    }
 
-        // Function to manually refresh status
-        function refreshStatus() {
-            checkStatus();
-        }
-
-        // Initial status check
-        checkStatus();
-
-        // Automatic status updates every 5 seconds
-        setInterval(checkStatus, 5000);
-    </script>
-</body>
-</html>
+    document.getElementById('refreshStatusBtn').addEventListener('click', checkStatus);
+    
+    // Initial check and auto-refresh
+    checkStatus();
+    setInterval(checkStatus, 5000);
+</script>
+{% endblock %}

@@ -630,3 +630,44 @@ a:hover {
     text-align: left;
     border-bottom: 1px solid #ddd;
 }
+
+/* MFA Specific Styles */
+.mfa-setup {
+    max-width: 600px;
+    margin: 20px auto;
+    padding: 20px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    text-align: center;
+}
+
+.qr-code-container {
+    margin: 20px 0;
+    padding: 15px;
+    background: #f8f9fa;
+    border-radius: 8px;
+}
+
+.qr-code {
+    max-width: 250px;
+    margin: 0 auto;
+    display: block;
+}
+
+.verification-form {
+    margin-top: 30px;
+    padding-top: 20px;
+    border-top: 1px solid #eee;
+}
+
+.input-error {
+    border-color: #dc3545 !important;
+    box-shadow: 0 0 0 2px rgba(220,53,69,.25);
+}
+
+.form-actions {
+    margin-top: 25px;
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+}

@@ -34,7 +34,7 @@
         </p>
     </div>
 
-    <script>
+    <script  nonce="{{ csp_nonce() }}">
         document.getElementById('password').addEventListener('input', function(e) {
             const errors = [];
             const value = e.target.value;

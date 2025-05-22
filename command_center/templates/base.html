@@ -33,5 +33,14 @@
         
         {% block content %}{% endblock %}
     </div>
+
+    {% block scripts %}
+    <script nonce="{{ csp_nonce() }}">
+        // Base template event listeners
+        document.addEventListener('DOMContentLoaded', function() {
+            // Global initialization code
+        });
+    </script>
+    {% endblock %}
 </body>
 </html>

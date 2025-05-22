@@ -1,125 +1,131 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Panel - Secure IoT Command Center</title>
-    <link rel="stylesheet" href="/static/css/styles.css">
-</head>
-<body>
-    <nav class="main-nav">
-        <a href="/">Home</a>
-        <a href="/control">Control Panel</a>
-        <a href="/logout">Logout</a>
-    </nav>
+{% extends "base.html" %}
 
-    <div class="container">
-        <div class="header">
-            <h1>🛡️ Admin Dashboard</h1>
-            <p>System monitoring and management</p>
-        </div>
+{% block title %}Admin Panel{% endblock %}
 
-        <div class="stats-grid">
-            <div class="stat-card">
-                <h3>Connected Devices</h3>
-                <p id="deviceCount">{{ devices|length }}</p>
-            </div>
-            <div class="stat-card">
-                <h3>Active Users</h3>
-                <p id="activeUsers">{{ active_users }}</p>
-            </div>
-            <div class="stat-card">
-                <h3>Security Events</h3>
-                <p id="securityEvents">{{ logs|length }}</p>
-            </div>
-        </div>
-
-        <h2>🔍 Security Audit Logs</h2>
-        <table class="log-table">
-            <thead>
-                <tr>
-                    <th>Timestamp</th>
-                    <th>Event Type</th>
-                    <th>Details</th>
-                    <th>Source</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for log in logs %}
-                <tr class="{% if log.event_type == 'SECURITY' %}security-alert{% elif log.event_type == 'VALIDATION' or log.event_type == 'AUTHORIZATION' %}validation-alert{% endif %}">
-                    <td>{{ log.timestamp }}</td>
-                    <td>{{ log.event_type }}</td>
-                    <td>{{ log.details }}</td>
-                    <td>{{ log.source }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        
-        <div class="admin-section">
-            <h2>👥 User Role Management</h2>
-            
-            <div class="current-users">
-                <h3>Current Users</h3>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Username</th>
-                            <th>Role</th>
-                            <th>Last Login</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for user in all_users %}
-                        <tr>
-                            <td>{{ user.username }}</td>
-                            <td>{{ user.role }}</td>
-                            <td>{{ user.last_login }}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-
-            <!-- Add the role update form here -->
-            <div class="role-update-form">
-                <h3>Update User Role</h3>
-                <form method="POST" action="{{ url_for('update_user_role') }}">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                    <div class="form-group">
-                        <label>Select User:</label>
-                        <select name="username" class="form-control" required>
-                            {% for user in all_users %}
-                            <option value="{{ user.username }}">{{ user.username }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>New Role:</label>
-                        <select name="role" class="form-control" required>
-                            <option value="viewer">Viewer (Read Only)</option>
-                            <option value="operator">Operator (Standard Access)</option>
-                            <option value="admin">Admin (Full Privileges)</option>
-                        </select>
-                    </div>
-                    <button type="submit" class="btn btn-warning">Update Role</button>
-                </form>
-            </div>
-        </div>
-    
-        <div class="nav-buttons">
-            <a href="/">🏠 Back to Home</a>
-            <a href="/control">🎮 Control Panel</a>
-            <a href="javascript:void(0)" onclick="window.location.reload()" class="success">🔄 Refresh Data</a>
-        </div>
-
+{% block content %}
+<div class="container">
+    <div class="header">
+        <h1>🛡️ Admin Dashboard</h1>
+        <p>System monitoring and management</p>
     </div>
 
-    <script>
-        // Auto-refresh every 10 seconds
-        setTimeout(() => {
-            window.location.reload();
-        }, 10000);
-    </script>
-</body>
-</html>
+    <div class="stats-grid">
+        <div class="stat-card">
+            <h3>Connected Devices</h3>
+            <p id="deviceCount">{{ devices|length }}</p>
+        </div>
+        <div class="stat-card">
+            <h3>Active Users</h3>
+            <p id="activeUsers">{{ active_users }}</p>
+        </div>
+        <div class="stat-card">
+            <h3>Security Events</h3>
+            <p id="securityEvents">{{ logs|length }}</p>
+        </div>
+    </div>
+
+    <h2>🔍 Security Audit Logs</h2>
+    <table class="log-table">
+        <thead>
+            <tr>
+                <th>Timestamp</th>
+                <th>Event Type</th>
+                <th>Details</th>
+                <th>Source</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for log in logs %}
+            <tr class="{% if log.event_type == 'SECURITY' %}security-alert{% elif log.event_type == 'VALIDATION' %}validation-alert{% endif %}">
+                <td>{{ log.timestamp }}</td>
+                <td>{{ log.event_type }}</td>
+                <td>{{ log.details }}</td>
+                <td>{{ log.source }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="admin-section">
+        <h2>👥 User Role Management</h2>
+        
+        <div class="current-users">
+            <h3>Registered Users</h3>
+            <table class="log-table">
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>Current Role</th>
+                        <th>Last Login</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for user in all_users %}
+                    <tr>
+                        <td>{{ user.username }}</td>
+                        <td>{{ user.role }}</td>
+                        <td>{{ user.last_login }}</td>
+                        <td>
+                            {% if user.active %}
+                                <span class="status-badge status-online">Active</span>
+                            {% else %}
+                                <span class="status-badge status-offline">Inactive</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="role-update-form">
+            <h3>Update User Permissions</h3>
+            <form method="POST" action="{{ url_for('update_user_role') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div class="form-group">
+                    <label>Select User:</label>
+                    <select name="username" class="form-control" required>
+                        {% for user in all_users %}
+                        <option value="{{ user.username }}">{{ user.username }} ({{ user.role }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>New Role:</label>
+                    <select name="role" class="form-control" required>
+                        {% for role in roles %}
+                        <option value="{{ role }}" {% if role == 'operator' %}selected{% endif %}>{{ role|title }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <button type="submit" class="btn success">
+                    🔄 Update Role
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <div class="nav-buttons">
+        <a href="/" class="btn">🏠 Back to Home</a>
+        <a href="/control" class="btn">🎮 Control Panel</a>
+        <button class="btn success" id="refreshAdminData">🔄 Refresh Data</button>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script nonce="{{ csp_nonce() }}">
+    document.getElementById('refreshAdminData').addEventListener('click', () => {
+        window.location.reload();
+    });
+
+    // Auto-refresh every 10 seconds
+    setTimeout(() => {
+        window.location.reload();
+    }, 10000);
+</script>
+{% endblock %}

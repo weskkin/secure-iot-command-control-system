@@ -18,7 +18,7 @@ from flask_login import (
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 import sqlite3
-from flask_talisman import Talisman
+from flask_talisman import Talisman, ALLOW_FROM
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding
@@ -35,6 +35,7 @@ import qrcode
 import secrets
 from OpenSSL import SSL  
 from service_identity import pyopenssl
+from datetime import timedelta
 
 load_dotenv()  # Load .env file
 
@@ -55,28 +56,42 @@ ALLOWED_COMMANDS = {
 login_manager = LoginManager()
 login_manager.login_view = 'login'
 
-# Create Flask Application
-app = Flask(__name__, 
-           static_folder='static',
-           template_folder='templates')
-app.secret_key = os.getenv('SECRET_KEY')
-app.config['WTF_CSRF_COOKIE_NAME'] = 'csrf_token'  # Add this line
+app = Flask(__name__)
+app.secret_key = os.getenv('SECRET_KEY')  # Should be 32+ random bytes
+
 csrf = CSRFProtect(app)
+
+# Session Security Configuration
+# Update session configuration
+app.config.update(
+    SESSION_COOKIE_NAME='__Secure-session',
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    PERMANENT_SESSION_LIFETIME=timedelta(minutes=15),
+    SESSION_REFRESH_EACH_REQUEST=True,
+    # Add this to prevent premature session expiration
+    SESSION_COOKIE_REFRESH_EACH_REQUEST=False
+)
 
 talisman = Talisman(
     app,
-    force_https=True,
-    strict_transport_security=True,
-    session_cookie_secure=True,
     content_security_policy={
         'default-src': "'self'",
         'style-src': ["'self'", "'unsafe-inline'"],
-        'script-src': ["'self'", "'unsafe-inline'"]
+        'script-src': [
+            "'self'", 
+            "'strict-dynamic'"
+        ],
+        'frame-ancestors': "'none'"
     },
-    referrer_policy='strict-origin-when-cross-origin' 
+    content_security_policy_nonce_in=['script-src']
 )
 
+# Initialize Flask-Login with secure settings
+login_manager = LoginManager()
 login_manager.init_app(app)
+login_manager.session_protection = "strong"  # Basic/strong/None
 
 def validate_password(password):
     """Enforce strong password policy
@@ -176,7 +191,7 @@ def init_db():
         INSERT OR IGNORE INTO users 
         (username, password_hash, role) 
         VALUES (?, ?, ?)
-    ''', ("admin", admin_hash, "admin"))
+    ''', ("admin", generate_password_hash(os.getenv('ADMIN_PWD', 'secure_admin_password')), "admin"))  # Added password param
     
     conn.commit()
     conn.close()
@@ -201,6 +216,10 @@ def load_user(user_id):
             backup_codes=user_data[5]
         )
     return None
+
+
+# Add after CSRF init
+csrf.exempt('api_send_command')  # Temporarily exempt API endpoint
 
 def admin_required(func):
     @wraps(func)
@@ -610,59 +629,85 @@ def login():
 @app.route('/enable-mfa')
 @login_required
 def enable_mfa():
-    if not current_user.totp_secret:
-        current_user.totp_secret = pyotp.random_base32()
-        # Update database
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("UPDATE users SET totp_secret = ? WHERE id = ?",
-                 (current_user.totp_secret, current_user.id))
-        conn.commit()
-        conn.close()
-    
-    # Generate provisioning URI
-    totp_uri = pyotp.totp.TOTP(current_user.totp_secret).provisioning_uri(
-        name=current_user.username,
-        issuer_name="IoT Command Center"
-    )
-    
-    # Generate QR code
-    img = qrcode.make(totp_uri)
-    project_root = Path(__file__).parent.absolute()
-    static_dir = project_root / "static"
-    static_dir.mkdir(exist_ok=True, parents=True)  # Create directory if needed
-    qr_path = static_dir / "mfa_qr.png"
-    img.save(qr_path)
-    
-    return render_template('enable_mfa.html')
+    try:
+        if not current_user.totp_secret:
+            current_user.totp_secret = pyotp.random_base32()
+            
+            # Update database with transaction handling
+            conn = sqlite3.connect(DB_PATH)
+            try:
+                c = conn.cursor()
+                c.execute("UPDATE users SET totp_secret = ? WHERE id = ?",
+                         (current_user.totp_secret, current_user.id))
+                conn.commit()
+            except sqlite3.Error as e:
+                conn.rollback()
+                flash('Error saving MFA configuration')
+                return redirect(url_for('control'))
+            finally:
+                conn.close()
+            
+            # Reload user from database instead of logout/login
+            user = load_user(current_user.id)
+            login_user(user)
+
+        # Generate provisioning URI with URL-safe characters
+        totp_uri = pyotp.totp.TOTP(current_user.totp_secret).provisioning_uri(
+            name=current_user.username.replace(' ', '_'),
+            issuer_name="IoT_Command_Center"
+        )
+
+        # Generate QR code with error handling
+        try:
+            img = qrcode.make(totp_uri)
+            project_root = Path(__file__).parent.absolute()
+            static_dir = project_root / "static"
+            static_dir.mkdir(exist_ok=True, parents=True)
+            qr_path = static_dir / "mfa_qr.png"
+            img.save(qr_path)
+        except Exception as e:
+            flash('Error generating QR code')
+            return redirect(url_for('control'))
+
+        # Force session update before rendering template
+        session.modified = True
+        return render_template('enable_mfa.html')
+
+    except Exception as e:
+        app.logger.error(f'MFA Setup Error: {str(e)}')
+        flash('An error occurred during MFA setup')
+        return redirect(url_for('control'))
 
 # Verify MFA Setup
 @app.route('/verify-mfa', methods=['POST'])
 @login_required
 def verify_mfa():
-    code = request.form.get('code')
-    if current_user.verify_totp(code):
-        # Update database to enable MFA
+    try:
+        code = request.form.get('code')
+        if not current_user.verify_totp(code):
+            flash('Invalid verification code')
+            return redirect(url_for('enable_mfa'))
+
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        c.execute("""
-            UPDATE users 
-            SET mfa_enabled = 1 
-            WHERE id = ?
-        """, (current_user.id,))
+        c.execute("UPDATE users SET mfa_enabled = 1 WHERE id = ?", 
+                 (current_user.id,))
         
-        # Generate and store backup codes
         backup_codes = current_user.generate_backup_codes()
         c.execute("UPDATE users SET backup_codes = ? WHERE id = ?",
                 (current_user.backup_codes, current_user.id))
         conn.commit()
         conn.close()
-        
-        flash('MFA enabled successfully!')
+
+        # Refresh user session without logout
+        user = load_user(current_user.id)
+        login_user(user)
+        session.permanent = True
+
         return render_template('backup_codes.html', codes=backup_codes)
-    
-    flash('Invalid verification code')
-    return redirect(url_for('enable_mfa'))
+    except Exception as e:
+        flash('Error processing MFA setup')
+        return redirect(url_for('enable_mfa'))
 
 # MFA Login Verification
 @app.route('/verify-login', methods=['GET', 'POST'])
@@ -963,7 +1008,8 @@ def get_devices():
 def get_status():
     return jsonify({
         "mqtt_connected": mqtt_app.get_connection_status(),
-        "device_count": len(mqtt_app.get_devices())
+        "device_count": len(mqtt_app.get_devices()),
+        "timestamp": time.time()  # Add for debugging
     })
     
 # Start the application

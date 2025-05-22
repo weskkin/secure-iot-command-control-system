@@ -1,11 +1,12 @@
 {% extends "base.html" %}
+
 {% block content %}
 <div class="container small">
     <div class="header simple">
         <h1>🔑 MFA Verification</h1>
     </div>
     
-    <form method="POST">
+    <form method="POST" id="mfaForm">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="number" name="code" placeholder="6-digit code" required>
         <button type="submit">Verify</button>
@@ -16,3 +17,16 @@
     </p>
 </div>
 {% endblock %}
+
+{% block scripts %}
+<script nonce="{{ csp_nonce() }}">
+    document.getElementById('mfaForm').addEventListener('submit', function(e) {
+        const codeInput = document.querySelector('[name="code"]');
+        if (!/^\d{6}$/.test(codeInput.value)) {
+            e.preventDefault();
+            alert('Please enter a valid 6-digit code');
+            codeInput.focus();
+        }
+    });
+</script>
+{% endblock %} 

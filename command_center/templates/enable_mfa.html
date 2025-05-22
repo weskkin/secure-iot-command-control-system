@@ -1,19 +1,92 @@
 {% extends "base.html" %}
+{% block title %}Enable MFA - Secure IoT Command Center{% endblock %}
+
 {% block content %}
 <div class="container small">
     <div class="header simple">
-        <h1>🔒 Enable MFA</h1>
+        <h1>🔒 Enable Multi-Factor Authentication</h1>
     </div>
     
+    <!-- Flash messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            <div class="flashes">
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ 'error' if category == 'error' else 'success' }}">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
+
     <div class="mfa-setup">
-        <p>Scan this QR code with Google Authenticator:</p>
-        <img src="{{ url_for('static', filename='mfa_qr.png') }}" width="200">
-        
-        <form method="POST" action="{{ url_for('verify_mfa') }}">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-            <input type="number" name="code" placeholder="Enter 6-digit code" required>
-            <button type="submit">Verify</button>
-        </form>
+        <div class="qr-instructions">
+            <p><strong>Step 1:</strong> Scan this QR code with your authenticator app</p>
+            <div class="qr-code-container">
+                <img src="{{ url_for('static', filename='mfa_qr.png') }}" 
+                     alt="MFA QR Code" 
+                     class="qr-code"
+                     onerror="this.style.display='none'; document.getElementById('qr-error').style.display='block';">
+                <div id="qr-error" class="alert error" style="display: none;">
+                    Failed to load QR code. Please refresh the page.
+                </div>
+            </div>
+        </div>
+
+        <div class="verification-form">
+            <p><strong>Step 2:</strong> Enter verification code</p>
+            <form method="POST" action="{{ url_for('verify_mfa') }}" id="mfaForm">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div class="form-group">
+                    <label for="mfa-code">6-digit Code</label>
+                    <input type="number" 
+                           id="mfa-code"
+                           name="code" 
+                           inputmode="numeric"
+                           pattern="\d{6}"
+                           placeholder="123456" 
+                           minlength="6"
+                           maxlength="6"
+                           required>
+                </div>
+
+                <div class="form-actions">
+                    <button type="submit" class="btn success">
+                        ✅ Verify & Activate MFA
+                    </button>
+                    <a href="{{ url_for('control') }}" class="btn">
+                        ⏭️ Skip for Now
+                    </a>
+                </div>
+            </form>
+        </div>
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script nonce="{{ csp_nonce() }}">
+    document.getElementById('mfaForm').addEventListener('submit', function(e) {
+        const codeInput = document.getElementById('mfa-code');
+        const codeValue = codeInput.value.trim();
+
+        // Client-side validation
+        if (!/^\d{6}$/.test(codeValue)) {
+            e.preventDefault();
+            alert('Please enter a valid 6-digit code');
+            codeInput.focus();
+            codeInput.classList.add('input-error');
+            return;
+        }
+        
+        codeInput.classList.remove('input-error');
+    });
+
+    // QR code error handling
+    document.querySelector('.qr-code').addEventListener('error', function() {
+        document.getElementById('qr-error').style.display = 'block';
+    });
+</script>
 {% endblock %}
