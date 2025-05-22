@@ -227,15 +227,23 @@ class IoTDevice:
         print(f"Device {self.device_id} connecting to secure MQTT broker ...")
 
         try:
-            # Create SSL context without CRL checks
-            context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+            # Create strict TLS 1.3 context
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             context.minimum_version = ssl.TLSVersion.TLSv1_3
             context.maximum_version = ssl.TLSVersion.TLSv1_3
+            context.verify_mode = ssl.CERT_REQUIRED
+            
+            # Certificate configuration
             context.load_verify_locations(self.ca_cert)
-            context.load_cert_chain(self.device_cert, self.device_key)
-    
-            client = mqtt.Client(client_id=self.device_id, 
-                            callback_api_version=mqtt.CallbackAPIVersion.VERSION2)
+            context.load_cert_chain(
+                certfile=self.device_cert,
+                keyfile=self.device_key
+            )
+            
+            client = mqtt.Client(
+                client_id=self.device_id,
+                callback_api_version=mqtt.CallbackAPIVersion.VERSION2
+            )
             client.tls_set_context(context)
             
             # Keep existing callbacks
@@ -245,7 +253,6 @@ class IoTDevice:
             print("Connecting to broker on port 8883 with TLS 1.3 ...")
             client.connect("localhost", 8883, 60)
             return client
-
         except Exception as e:
             print(f"Error connecting to broker: {str(e)}")
             return None
