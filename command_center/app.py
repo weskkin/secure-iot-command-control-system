@@ -226,10 +226,6 @@ def load_user(user_id):
         )
     return None
 
-
-# Add after CSRF init
-csrf.exempt('api_send_command')  # Temporarily exempt API endpoint
-
 def admin_required(func):
     @wraps(func)
     def decorated_view(*args, **kwargs):
