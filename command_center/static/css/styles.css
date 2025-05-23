@@ -671,3 +671,29 @@ a:hover {
     gap: 15px;
     justify-content: center;
 }
+
+/* Center QR code container */
+.qr-code-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    margin: 20px auto;
+    max-width: 300px;
+}
+
+/* Style QR code image */
+.qr-code {
+    width: 100%;
+    max-width: 250px;  /* Control maximum size */
+    height: auto;
+    margin: 0 auto;    /* Center horizontally */
+    display: block;    /* Needed for margin auto */
+}
+
+/* Center error message */
+#qr-error {
+    text-align: center;
+    margin-top: 15px;
+}
+

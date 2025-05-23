@@ -45,6 +45,7 @@ ROLES = {
     "operator": 2,
     "admin": 3
 }
+
 VALID_ROLES = ["viewer", "operator", "admin"]
 
 ALLOWED_COMMANDS = {
@@ -689,7 +690,7 @@ def enable_mfa():
 @login_required
 def verify_mfa():
     try:
-        code = request.form.get('code').stripe()
+        code = request.form.get('code').strip()
         
         # Validate format first
         if not re.fullmatch(r'\d{6}', code):  # Use fullmatch instead of match
