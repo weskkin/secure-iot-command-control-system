@@ -36,7 +36,7 @@
         </thead>
         <tbody>
             {% for log in logs %}
-            <tr class="{% if log.event_type == 'SECURITY' %}security-alert{% elif log.event_type == 'VALIDATION' %}validation-alert{% endif %}">
+            <tr class="{% if log.event_type == 'SECURITY' %}security-alert{% elif log.event_type == 'VALIDATION' %}validation-alert{% elif log.event_type == 'AUTH_FAIL' %}authentication-alert{% elif log.event_type == 'AUTHORIZATION' %}authorization-alert{% endif %}">
                 <td>{{ log.timestamp|e }}</td>
                 <td>{{ log.event_type|e }}</td>
                 <td>{{ log.details|e }}</td>
