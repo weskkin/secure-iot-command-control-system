@@ -542,10 +542,11 @@ class MQTTIntegratedApp:
 
     def add_audit_log(self, event_type, details, source):
         """Add an entry to the audit log"""
+        sanitized_details = details.replace('\n', ' ').strip()
         log_entry = {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),  # Use datetime instead of time
             "event_type": event_type,
-            "details": details,
+            "details": sanitized_details[:500], #limit length
             "source": source
         }
         print(f"Adding audit log: {log_entry}")
@@ -688,7 +689,14 @@ def enable_mfa():
 @login_required
 def verify_mfa():
     try:
-        code = request.form.get('code')
+        code = request.form.get('code').stripe()
+        
+        # Validate format first
+        if not re.fullmatch(r'\d{6}', code):  # Use fullmatch instead of match
+            flash('Invalid MFA code format')
+            return redirect(url_for('verify_login'))
+
+        # Then verify code validity
         if not current_user.verify_totp(code):
             flash('Invalid verification code')
             return redirect(url_for('enable_mfa'))
@@ -716,6 +724,7 @@ def verify_mfa():
 
 # MFA Login Verification
 @app.route('/verify-login', methods=['GET', 'POST'])
+@limiter.limit("10 per 5 minutes")
 def verify_login():
     if request.method == 'POST':
         user_id = session.get('mfa_pending_user')
@@ -777,7 +786,11 @@ def recovery():
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
-        username = request.form['username']
+        username = request.form['username'].strip()
+        if not re.match(r'^[a-zA-Z0-9_-]{3,20}$', username):
+            flash('Username must be 3-20 characters (letters, numbers, _-)')
+            return redirect(url_for('register'))
+        
         password = request.form['password']
         
         errors = []
@@ -916,7 +929,7 @@ def update_user_role():
 @login_required
 def send_command():
     device_id = request.form.get("device_id")
-    command = request.form.get("command")
+    command = request.form.get("command").strip().lower()
 
     if not device_id or not command:
         return jsonify({"status": "error", "message": "Missing device_id or command"}), 400

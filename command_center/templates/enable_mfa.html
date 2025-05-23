@@ -42,14 +42,15 @@
                 <div class="form-group">
                     <label for="mfa-code">6-digit Code</label>
                     <input type="number" 
-                           id="mfa-code"
-                           name="code" 
-                           inputmode="numeric"
-                           pattern="\d{6}"
-                           placeholder="123456" 
-                           minlength="6"
-                           maxlength="6"
-                           required>
+                   id="mfa-code"
+                   name="code" 
+                   inputmode="numeric"
+                   pattern="\d{6}"
+                   placeholder="123456" 
+                   minlength="6"
+                   maxlength="6"
+                   required
+                   oninput="this.value = this.value.slice(0, 6)">
                 </div>
 
                 <div class="form-actions">

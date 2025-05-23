@@ -40,6 +40,7 @@
             const value = e.target.value;
             const errorDiv = document.getElementById('password-errors');
 
+            // Server-side compatible validation
             if (value.length < 12) errors.push("✗ At least 12 characters");
             if (!/[A-Z]/.test(value)) errors.push("✗ At least 1 uppercase letter");
             if (!/[a-z]/.test(value)) errors.push("✗ At least 1 lowercase letter");

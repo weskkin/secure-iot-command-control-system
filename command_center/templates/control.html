@@ -42,6 +42,17 @@
             document.getElementById('refreshButton').addEventListener('click', refreshDevices);
         });
 
+
+        // HTML escaping function
+        function escapeHtml(unsafe) {
+            return unsafe
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
         // Function to refresh device list
         async function refreshDevices() {
             try {
@@ -110,16 +121,18 @@
 
         // Function to create device card HTML
         function createDeviceCard(deviceId, info) {
+            const safeDeviceId = escapeHtml(deviceId);
+            const safeType = escapeHtml(info.type || 'Unknown Type');
             const isOnline = info.status === 'online';
             const statusClass = isOnline ? 'status-online' : 'status-offline';
             const statusText = isOnline ? 'Online' : 'Offline';
             
             return `
-                <div class="device-card" id="device-${deviceId}">
+                <div class="device-card" id="device-${safeDeviceId}">
                     <div class="device-header">
                         <div class="device-info">
-                            <h3>${deviceId}</h3>
-                            <div class="device-type">${info.type || 'Unknown Type'}</div>
+                            <h3>${safeDeviceId}</h3>
+                            <div class="device-type">${safeType}</div>
                         </div>
                         <span class="status-badge ${statusClass}">${statusText}</span>
                     </div>
@@ -128,8 +141,8 @@
                         <h4>📤 Send Command</h4>
                         <div class="command-form">
                             <div class="form-group">
-                                <label for="command-${deviceId}">Command</label>
-                                <select id="command-${deviceId}" class="command-select">
+                                <label for="command-${safeDeviceId}">Command</label>
+                                <select id="command-${safeDeviceId}" class="command-select">
                                     <option value="read_temperature">📊 Read Temperature</option>
                                     <option value="activate">✅ Activate</option>
                                     <option value="deactivate">❌ Deactivate</option>
@@ -140,21 +153,21 @@
                             </div>
                             <div class="form-group">
                                 <input type="text" 
-                                    id="custom-command-${deviceId}" 
+                                    id="custom-command-${safeDeviceId}" 
                                     placeholder="Enter custom command"
                                     style="display: none;">
                             </div>
-                            <button class="send-btn" data-device-id="${deviceId}" ${!isOnline ? 'disabled' : ''}>
+                            <button class="send-btn" data-device-id="${safeDeviceId}" ${!isOnline ? 'disabled' : ''}>
                                 📨 Send
                             </button>
                         </div>
                     </div>
                     
-                    <div class="result" id="result-${deviceId}"></div>
+                    <div class="result" id="result-${safeDeviceId}"></div>
                     
-                    <div class="command-history" id="history-${deviceId}" style="display: none;">
+                    <div class="command-history" id="history-${safeDeviceId}" style="display: none;">
                         <strong>Recent Commands:</strong>
-                        <div id="history-items-${deviceId}"></div>
+                        <div id="history-items-${safeDeviceId}"></div>
                     </div>
                 </div>
             `;
@@ -252,6 +265,7 @@
 
         // Function to add to command history
         function addToCommandHistory(deviceId, command, status) {
+            const safeCommand = escapeHtml(command);
             const historyDiv = document.getElementById(`history-${deviceId}`);
             const historyItems = document.getElementById(`history-items-${deviceId}`);
             
@@ -260,7 +274,7 @@
             
             const historyItem = document.createElement('div');
             historyItem.className = 'command-history-item';
-            historyItem.innerHTML = `${timestamp} - ${statusIcon} ${command}`;
+            historyItem.innerHTML = `${timestamp} - ${statusIcon} ${safeCommand}`;
             
             historyItems.insertBefore(historyItem, historyItems.firstChild);
             

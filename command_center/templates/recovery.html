@@ -13,7 +13,9 @@
             <label>Enter Backup Code:</label>
             <input type="text" name="code" required 
                    placeholder="XXXX-XXXX" 
-                   pattern="[a-f0-9]{4}-[a-f0-9]{4}|[a-f0-9]{8}">
+                   pattern="[a-f0-9]{4}-[a-f0-9]{4}"
+                   title="8-character hexadecimal code (e.g. 1a3b5c7d)"
+                   maxlength="9">
         </div>
         <button type="submit">Verify Backup Code</button>
     </form>

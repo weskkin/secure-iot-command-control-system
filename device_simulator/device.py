@@ -137,7 +137,7 @@ class IoTDevice:
             received_device_id = topic_parts[2]
             
             # Validate device ID format
-            if not re.match(r'^device_\d{3}$', received_device_id):
+            if not re.match(r'^device_\d{3}$', received_device_id.strip()):
                 print(f"Invalid device ID format: {received_device_id}")
                 return
                 
@@ -271,24 +271,25 @@ class IoTDevice:
         if command == "read_temperature":
             # Simulate temperature reading
             temperature = round(random.uniform(18.0, 32.0), 1)
+            sanitized_msg = f"Temperature reading: {temperature}°C".replace('<', '&lt;').replace('>', '&gt;')
             return {
                 "status": "success", 
-                "message": f"Temperature reading: {temperature}°C",
+                "message": sanitized_msg,  # Sanitized message
                 "data": {"temperature": temperature}
-            }
+             }
         elif command == "activate":
-            return {"status": "success", "message": "Device activated successfully"}
+            return {"status": "success", "message": "Device activated successfully".replace('<', '&lt;').replace('>', '&gt;')}
         elif command == "deactivate":
-            return {"status": "success", "message": "Device deactivated successfully"}
+            return {"status": "success", "message": "Device deactivated successfully".replace('<', '&lt;').replace('>', '&gt;')}
         elif command == "restart":
-            return {"status": "success", "message": "Device restarted successfully"}
+            return {"status": "success", "message": "Device restarted successfully".replace('<', '&lt;').replace('>', '&gt;')}
         else:
             # For unknown commands, simulate 90% success rate
             success = random.random() > 0.1
             if success:
-                return {"status": "success", "message": f"Command '{command}' executed successfully"}
+                return {"status": "success", "message": f"Command '{command}' executed successfully".replace('<', '&lt;').replace('>', '&gt;')}
             else:
-                return {"status": "error", "message": f"Failed to execute command '{command}'"}
+                return {"status": "error", "message": f"Failed to execute command '{command}'".replace('<', '&lt;').replace('>', '&gt;')}
         
 
 #Simple test code

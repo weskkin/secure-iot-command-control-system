@@ -24,7 +24,7 @@
                 <div class="flashes">
                     {% for category, message in messages %}
                         <div class="alert alert-{% if category == 'error' %}error{% elif category == 'success' %}success{% else %}info{% endif %}">
-                            {{ message }}
+                            {{ message|e }}
                         </div>
                     {% endfor %}
                 </div>
