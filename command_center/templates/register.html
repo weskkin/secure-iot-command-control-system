@@ -23,9 +23,37 @@
 
         <form method="POST" action="/register">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-            <input type="text" name="username" placeholder="Username" required>
-            <input type="password" name="password" id="password" placeholder="Password" required>
-            <div id="password-errors"></div>
+            
+            <div class="form-group">
+                <input type="text" name="first_name" placeholder="First Name" required>
+            </div>
+            
+            <div class="form-group">
+                <input type="text" name="last_name" placeholder="Last Name" required>
+            </div>
+            
+            <div class="form-group">
+                <input type="email" name="email" placeholder="Email" required>
+            </div>
+            
+            <div class="form-group">
+                <input type="text" name="username" placeholder="Username" required>
+            </div>
+            
+            <div class="form-group">
+                <input type="text" name="sector" placeholder="Sector/Department" required>
+            </div>
+            
+            <div class="form-group">
+                <input type="password" name="password" id="password" placeholder="Password" required>
+                <div id="password-errors"></div>
+            </div>
+            
+            <div class="form-group">
+                <input type="password" name="confirm_password" placeholder="Confirm Password" required>
+                <div id="confirm-error"></div>
+            </div>
+            
             <button type="submit">Create Account</button>
         </form>
 
@@ -34,20 +62,43 @@
         </p>
     </div>
 
-    <script  nonce="{{ csp_nonce() }}">
-        document.getElementById('password').addEventListener('input', function(e) {
+    <script nonce="{{ csp_nonce() }}">
+        const passwordInput = document.getElementById('password');
+        const confirmInput = document.querySelector('input[name="confirm_password"]');
+        const passwordError = document.getElementById('password-errors');
+        const confirmError = document.getElementById('confirm-error');
+        
+        function validatePassword() {
             const errors = [];
-            const value = e.target.value;
-            const errorDiv = document.getElementById('password-errors');
-
-            // Server-side compatible validation
+            const value = passwordInput.value;
+            
             if (value.length < 12) errors.push("✗ At least 12 characters");
             if (!/[A-Z]/.test(value)) errors.push("✗ At least 1 uppercase letter");
             if (!/[a-z]/.test(value)) errors.push("✗ At least 1 lowercase letter");
             if (!/\d/.test(value)) errors.push("✗ At least 1 number");
             if (!/[!@#$%^&*(),.?":{}|<>]/.test(value)) errors.push("✗ At least 1 special character");
-
-            errorDiv.innerHTML = errors.join('<br>');
+            
+            passwordError.innerHTML = errors.join('<br>');
+            validateConfirm();
+            return errors.length === 0;
+        }
+        
+        function validateConfirm() {
+            if (passwordInput.value !== confirmInput.value) {
+                confirmError.textContent = "✗ Passwords do not match";
+                return false;
+            }
+            confirmError.textContent = "";
+            return true;
+        }
+        
+        passwordInput.addEventListener('input', validatePassword);
+        confirmInput.addEventListener('input', validateConfirm);
+        
+        document.querySelector('form').addEventListener('submit', (e) => {
+            if (!validatePassword() || !validateConfirm()) {
+                e.preventDefault();
+            }
         });
     </script>
 </body>

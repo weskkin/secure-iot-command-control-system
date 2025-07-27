@@ -19,7 +19,7 @@ login_response = session.post(
     login_url,
     data={
         "username": "admin",
-        "password": os.getenv('ADMIN_PWD', 'Karehtnikarehtni26!'),
+        "password": os.getenv('ADMIN_PWD'),
         "csrf_token": csrf_token
     },
     headers={"Referer": login_url},

@@ -23,9 +23,11 @@
     <div class="mfa-setup">
         <div class="qr-instructions">
             <div class="qr-code-container">
+                <!-- Added ID for JavaScript reference -->
                 <img src="{{ url_for('static', filename='mfa_qr.png') }}" 
                     alt="MFA QR Code" 
-                    class="qr-code">
+                    class="qr-code"
+                    id="mfa-qr-image">
                 <div id="qr-error" class="alert error" style="display: none;">
                     Failed to load QR code. Please refresh the page.
                 </div>
@@ -38,7 +40,9 @@
                 
                 <div class="form-group">
                     <label for="mfa-code">6-digit Code</label>
-                    <input type="text" name="code" pattern="\d{6}" placeholder="123456" maxlength="6" oninput="this.value = this.value.replace(/\D/g, '').slice(0,6)">
+                    <!-- Removed the inline oninput handler -->
+                    <input type="text" id="mfa-code" name="code" pattern="\d{6}" 
+                           placeholder="123456" maxlength="6">
                 </div>
 
                 <div class="form-actions">
@@ -73,9 +77,15 @@
         codeInput.classList.remove('input-error');
     });
 
-    // QR code error handling
-    document.querySelector('.qr-code').addEventListener('error', function() {
+    // QR code error handling - fixed reference
+    document.getElementById('mfa-qr-image').addEventListener('error', function() {
         document.getElementById('qr-error').style.display = 'block';
+    });
+    
+    // New: Input sanitization for MFA code
+    document.getElementById('mfa-code').addEventListener('input', function(e) {
+        // Allow only digits and limit to 6 characters
+        this.value = this.value.replace(/\D/g, '').slice(0, 6);
     });
 </script>
 {% endblock %}

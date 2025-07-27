@@ -20,7 +20,7 @@
         </div>
         <div class="stat-card">
             <h3>Security Events</h3>
-            <p id="securityEvents">{{ logs|length }}</p>
+            <p id="securityEvents">{{ security_events }}</p>
         </div>
     </div>
 
@@ -55,6 +55,9 @@
                 <thead>
                     <tr>
                         <th>Username</th>
+                        <th>Name</th>
+                        <th>Email</th>
+                        <th>Sector</th>
                         <th>Current Role</th>
                         <th>Last Login</th>
                         <th>Status</th>
@@ -64,6 +67,9 @@
                     {% for user in all_users %}
                     <tr>
                         <td>{{ user.username|e }}</td>
+                        <td>{{ user.first_name|e }} {{ user.last_name|e }}</td>
+                        <td>{{ user.email|e }}</td>
+                        <td>{{ user.sector|e }}</td>
                         <td>{{ user.role|e }}</td>
                         <td>{{ user.last_login|e }}</td>
                         <td>
@@ -106,6 +112,15 @@
                     🔄 Update Role
                 </button>
             </form>
+        </div>
+
+        <div class="log-management">
+            <h3>Log Management</h3>
+            <div class="form-actions">
+                <a href="{{ url_for('verify_logs') }}" class="btn">
+                    🔍 Verify Log Integrity
+                </a>
+            </div>
         </div>
     </div>
 

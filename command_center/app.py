@@ -1,43 +1,30 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, abort, session
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-import os
+import os, json, time, threading, ssl, sqlite3, re, hashlib
 from pathlib import Path
-import json
-import time
-import threading
 import paho.mqtt.client as mqtt
-import ssl
-from flask_login import (
-    LoginManager, 
-    UserMixin, 
-    login_user, 
-    logout_user, 
-    login_required, 
-    current_user
-)
+from datetime import datetime, timedelta
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from flask_wtf.csrf import CSRFProtect
+from flask_talisman import Talisman
 from werkzeug.security import generate_password_hash, check_password_hash
-import sqlite3
-from flask_talisman import Talisman, ALLOW_FROM
+
+# Cryptography primitives for signing / verifying messages
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.x509 import load_pem_x509_certificate
 from cryptography.exceptions import InvalidSignature
-import base64
+import base64, pyotp, qrcode, secrets
 from functools import wraps 
-from datetime import datetime
-from flask_wtf.csrf import CSRFProtect
-import re
-from dotenv import load_dotenv
-import pyotp
-import qrcode
-import secrets
-from OpenSSL import SSL  
-from service_identity import pyopenssl
-from datetime import timedelta
 
-load_dotenv()  # Load .env file
+# Sets up audit DB
+from audit_db import init_audit_db
+
+# Load .env file
+from dotenv import load_dotenv
+load_dotenv()  
 
 # Define role hierarchy
 ROLES = {
@@ -49,7 +36,7 @@ ROLES = {
 VALID_ROLES = ["viewer", "operator", "admin"]
 
 ALLOWED_COMMANDS = {
-    "temperature_sensor": ["read_temperature", "restart"],
+    "temperature_sensor": ["read_temperature", "restart", "status_check"],
     "security_camera": ["activate", "deactivate", "restart", "status_check"]
 }
 
@@ -58,12 +45,11 @@ login_manager = LoginManager()
 login_manager.login_view = 'login'
 
 app = Flask(__name__)
-app.secret_key = os.getenv('SECRET_KEY')  # Should be 32+ random bytes
+app.secret_key = os.getenv('SECRET_KEY')  # Session signing
 
 csrf = CSRFProtect(app)
 
 # Session Security Configuration
-# Update session configuration
 app.config.update(
     SESSION_COOKIE_NAME='__Secure-session',
     SESSION_COOKIE_SECURE=True,
@@ -71,7 +57,6 @@ app.config.update(
     SESSION_COOKIE_SAMESITE='Lax',
     PERMANENT_SESSION_LIFETIME=timedelta(minutes=15),
     SESSION_REFRESH_EACH_REQUEST=True,
-    # Add this to prevent premature session expiration
     SESSION_COOKIE_REFRESH_EACH_REQUEST=False
 )
 
@@ -81,8 +66,8 @@ talisman = Talisman(
         'default-src': "'self'",
         'style-src': ["'self'", "'unsafe-inline'"],
         'script-src': [
-            "'self'", 
-            "'strict-dynamic'"
+            "'strict-dynamic'",
+            "'unsafe-hashes'"  # NEW: Allow hashed event handlers
         ],
         'frame-ancestors': "'none'"
     },
@@ -90,11 +75,17 @@ talisman = Talisman(
     force_https=True,
     strict_transport_security=True,
     strict_transport_security_max_age=31536000,
+    strict_transport_security_include_subdomains=True,
+    strict_transport_security_preload=True,
     frame_options='DENY',
     referrer_policy='strict-origin-when-cross-origin',
-    feature_policy={
-        'geolocation': "'none'",
-        'camera': "'none'"
+    # feature_policy={
+    #     'geolocation': "'none'",
+    #     'camera': "'none'"
+    # }
+    permissions_policy={
+        'geolocation': '()',
+        'camera': '()'
     }
 )
 
@@ -102,6 +93,11 @@ talisman = Talisman(
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.session_protection = "strong"  # Basic/strong/None
+
+@app.after_request
+def set_additional_security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 def validate_password(password):
     """Enforce strong password policy
@@ -125,7 +121,8 @@ def validate_password(password):
 # User model
 class User(UserMixin):
     def __init__(self, id, username, role, totp_secret=None, 
-                 mfa_enabled=False, backup_codes='[]'):
+                 mfa_enabled=False, backup_codes='[]',
+                 first_name=None, last_name=None, email=None, sector=None):
         
         # Validate role during initialization
         if role not in VALID_ROLES:
@@ -137,6 +134,10 @@ class User(UserMixin):
         self.totp_secret = totp_secret
         self.mfa_enabled = mfa_enabled
         self.backup_codes = backup_codes
+        self.first_name = first_name
+        self.last_name = last_name
+        self.email = email
+        self.sector = sector
 
     def has_permission(self, required_role):
         """Check if user's role meets minimum required level"""
@@ -177,6 +178,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 
 # DB will always be in command_center/
 DB_PATH = os.path.join(current_dir, "users.db")
+AUDIT_DB_PATH = init_audit_db()
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -185,9 +187,13 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users 
         (
             id INTEGER PRIMARY KEY, 
-            username TEXT UNIQUE,
-            password_hash TEXT,
-            role TEXT NOT NULL DEFAULT 'operator' CHECK (role IN ('viewer', 'operator', 'admin')),
+            first_name TEXT NOT NULL,
+            last_name TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            username TEXT UNIQUE NOT NULL,
+            sector TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'viewer' CHECK (role IN ('viewer', 'operator', 'admin')),
             last_login REAL,
             totp_secret TEXT DEFAULT '',
             mfa_enabled BOOLEAN DEFAULT 0,
@@ -196,12 +202,12 @@ def init_db():
     ''')
     
     # Add admin user if not exists
-    admin_hash = generate_password_hash("secure_admin_password")
     c.execute('''
         INSERT OR IGNORE INTO users 
-        (username, password_hash, role) 
-        VALUES (?, ?, ?)
-    ''', ("admin", generate_password_hash(os.getenv('ADMIN_PWD', 'secure_admin_password')), "admin"))  # Added password param
+        (first_name, last_name, email, username, sector, password_hash, role) 
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', ("Admin", "Admin", "admin@example.com", "admin", "Administration", 
+          generate_password_hash(os.getenv('ADMIN_PWD')), "admin"))
     
     conn.commit()
     conn.close()
@@ -212,7 +218,11 @@ init_db()  # Run once
 def load_user(user_id):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("SELECT id, username, role, totp_secret, mfa_enabled, backup_codes FROM users WHERE id = ?", (user_id,))
+    c.execute("""
+        SELECT id, username, role, totp_secret, mfa_enabled, backup_codes,
+               first_name, last_name, email, sector 
+        FROM users WHERE id = ?
+    """, (user_id,))
     user_data = c.fetchone()
     conn.close()
     
@@ -223,7 +233,11 @@ def load_user(user_id):
             role=user_data[2],
             totp_secret=user_data[3],
             mfa_enabled=bool(user_data[4]),
-            backup_codes=user_data[5]
+            backup_codes=user_data[5],
+            first_name=user_data[6],
+            last_name=user_data[7],
+            email=user_data[8],
+            sector=user_data[9]
         )
     return None
 
@@ -263,6 +277,9 @@ class MQTTIntegratedApp:
 
         # Load existing TLS private key for signing
         self.signing_key = self._load_signing_key()
+
+        self.audit_db_path = AUDIT_DB_PATH
+        self.log_lock = threading.Lock()
 
     def _verify_certificates(self):
         """Verify that all required certificate files exist"""
@@ -421,14 +438,14 @@ class MQTTIntegratedApp:
                 message_timestamp = message_data.get("timestamp")
                 if not message_timestamp:
                     log_msg = f"Missing timestamp from {device_id}"
-                    self.add_audit_log("SECURITY", log_msg, device_id)
+                    self.add_audit_log("SECURITY", log_msg, device_id, user_id=None)
                     return
 
                 current_time = time.time()
                 if abs(current_time - message_timestamp) > 30:  # 30-second window
                     log_msg = f"Replay attack detected from {device_id} (Δ={current_time-message_timestamp:.1f}s)"
                     print(f"⚠️ {log_msg}")
-                    self.add_audit_log("SECURITY", log_msg, device_id)
+                    self.add_audit_log("SECURITY", log_msg, device_id, user_id=None)
                     return
                 
                 if message_type == "status":
@@ -449,24 +466,24 @@ class MQTTIntegratedApp:
                     if "REJECTED: Replay attack detected" in result:
                         log_msg = f"Replay attack blocked by {device_id} (command: {command})"
                         print(f"🔴 {log_msg}")
-                        self.add_audit_log("SECURITY", log_msg, device_id)
+                        self.add_audit_log("SECURITY", log_msg, device_id, user_id=None)
 
         except InvalidSignature:
             log_msg = f"Tampered message from {device_id}! Rejecting."
             print(f"⚠️ {log_msg}")
-            self.add_audit_log("SECURITY", log_msg, device_id)
+            self.add_audit_log("SECURITY", log_msg, device_id, user_id=None)
         except KeyError as e:
             log_msg = f"Missing field in message: {str(e)}"
             print(f"❌ {log_msg}")
-            self.add_audit_log("ERROR", log_msg, "MQTT")              
+            self.add_audit_log("ERROR", log_msg, "MQTT", user_id=None)              
         except json.JSONDecodeError:
             log_msg = f"Invalid JSON: {msg.payload.decode()}"
             print(f"❌ {log_msg}")
-            self.add_audit_log("ERROR", log_msg, "MQTT")
+            self.add_audit_log("ERROR", log_msg, "MQTT", user_id=None)
         except Exception as e:
             log_msg = f"Error processing message: {str(e)}"
             print(f"🔥 {log_msg}")
-            self.add_audit_log("ERROR", log_msg, "SYSTEM")
+            self.add_audit_log("ERROR", log_msg, "SYSTEM", user_id=None)
 
     def send_command(self, device_id, command):
         """Original method with automatic timestamp"""
@@ -510,12 +527,12 @@ class MQTTIntegratedApp:
                 result = self.mqtt_client.publish(topic, json.dumps(command_msg))
             
             if result.rc == mqtt.MQTT_ERR_SUCCESS:
-                self.add_audit_log("COMMAND", f"Sent {command} to {device_id}", "COMMAND_CENTER")
+                self.add_audit_log("COMMAND", f"Sent {command} to {device_id}", "COMMAND_CENTER", user_id=None)
                 print(f"Sent command {command} to device {device_id}")
                 return True
             else:
                 print(f"Failed to send command. MQTT error code: {result.rc}")
-                self.add_audit_log("ERROR", f"Failed to send {command} to {device_id}", "COMMAND_CENTER")
+                self.add_audit_log("ERROR", f"Failed to send {command} to {device_id}", "COMMAND_CENTER", user_id=None)
                 return False
         except Exception as e:
             print(f"Error sending command: {str(e)}")
@@ -541,20 +558,60 @@ class MQTTIntegratedApp:
             self.devices = active_devices
             return self.devices.copy()
 
-    def add_audit_log(self, event_type, details, source):
-        """Add an entry to the audit log"""
-        sanitized_details = details.replace('\n', ' ').strip()
-        log_entry = {
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),  # Use datetime instead of time
-            "event_type": event_type,
-            "details": sanitized_details[:500], #limit length
-            "source": source
-        }
-        print(f"Adding audit log: {log_entry}")
-        self.audit_logs.append(log_entry)
-        # Keep log size under limit
-        if len(self.audit_logs) > self.max_log_entries:
-            self.audit_logs.pop(0)
+    def add_audit_log(self, event_type, details, source, user_id):
+        """Add an entry to the audit log with integrity protection"""
+        sanitized_details = details.replace('\n', ' ').strip()[:500]
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Create hash for integrity verification
+        log_data = f"{timestamp}|{event_type}|{sanitized_details}|{source}|{user_id}"
+        log_hash = hashlib.sha256(log_data.encode('utf-8')).hexdigest()
+
+        with self.log_lock:
+            try:
+                conn = sqlite3.connect(self.audit_db_path)
+                c = conn.cursor()
+                c.execute('''
+                    INSERT INTO audit_logs 
+                    (timestamp, event_type, details, source, user_id, log_hash) 
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (timestamp, event_type, sanitized_details, source, user_id, log_hash))
+                conn.commit()
+            except sqlite3.IntegrityError:
+                # Handle hash collision (extremely rare)
+                pass
+            finally:
+                conn.close()
+        
+        print(f"Adding audit log: {log_data}")
+
+    def rotate_logs(self, max_days=30):
+        """Archive logs older than max_days"""
+        rotation_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cutoff_date = (datetime.now() - timedelta(days=max_days)).strftime("%Y-%m-%d")
+        
+        with self.log_lock:
+            try:
+                conn = sqlite3.connect(self.audit_db_path)
+                c = conn.cursor()
+                
+                # Count logs to be archived
+                c.execute("SELECT COUNT(*) FROM audit_logs WHERE date(timestamp) < ?", (cutoff_date,))
+                count = c.fetchone()[0]
+                
+                # Archive logs (in real implementation, move to separate DB/backup)
+                c.execute("DELETE FROM audit_logs WHERE date(timestamp) < ?", (cutoff_date,))
+                
+                # Record rotation
+                c.execute('''
+                    INSERT INTO log_rotation (rotation_time, logs_archived)
+                    VALUES (?, ?)
+                ''', (rotation_time, count))
+                
+                conn.commit()
+                print(f"Rotated {count} logs older than {cutoff_date}")
+            finally:
+                conn.close()
 
     def _verify_callback(self, conn, cert, errnum, depth, ok):
         """Custom certificate verification callback"""
@@ -564,6 +621,16 @@ class MQTTIntegratedApp:
     
 # Create global instance
 mqtt_app = MQTTIntegratedApp()
+
+# Add periodic log rotation
+def log_rotation_scheduler():
+    while True:
+        time.sleep(86400)  # Run daily
+        mqtt_app.rotate_logs()
+
+# Start the scheduler in a separate thread
+rotation_thread = threading.Thread(target=log_rotation_scheduler, daemon=True)
+rotation_thread.start()
 
 # Route handlers
 @app.route('/')
@@ -582,32 +649,47 @@ limiter = Limiter(app=app, key_func=get_remote_address, storage_uri="memory://")
 @limiter.limit("20 per 5 minutes")  # 20 attempts every 5 minutes
 def login():
     if request.method == 'POST':
-        username = request.form['username']
+        identifier = request.form['identifier'].strip()
         password = request.form['password']
         
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        # Get ALL user fields needed for User object
-        c.execute("""
-            SELECT id, username, password_hash, role, 
-                   totp_secret, mfa_enabled, backup_codes 
-            FROM users WHERE username = ?
-        """, (username,))
+
+        # Check if identifier is email or username
+        if '@' in identifier:
+            c.execute("""
+                SELECT id, username, password_hash, role, 
+                       totp_secret, mfa_enabled, backup_codes,
+                       first_name, last_name, email, sector
+                FROM users WHERE email = ?
+            """, (identifier,))
+        else:
+            c.execute("""
+                SELECT id, username, password_hash, role, 
+                       totp_secret, mfa_enabled, backup_codes,
+                       first_name, last_name, email, sector
+                FROM users WHERE username = ?
+            """, (identifier,))
+
         user_data = c.fetchone()
         conn.close()
         
         if user_data and check_password_hash(user_data[2], password):
-            # Create PROPER User object with all fields
+            # Create User object with all fields
             user_obj = User(
                 id=user_data[0],
                 username=user_data[1],
                 role=user_data[3],
                 totp_secret=user_data[4],
                 mfa_enabled=bool(user_data[5]),
-                backup_codes=user_data[6]
+                backup_codes=user_data[6],
+                first_name=user_data[7],
+                last_name=user_data[8],
+                email=user_data[9],
+                sector=user_data[10]
             )
             
-            # Check MFA on the User OBJECT
+            # Check MFA
             if user_obj.mfa_enabled:
                 session['mfa_pending_user'] = user_obj.id
                 return redirect(url_for('verify_login'))
@@ -622,13 +704,17 @@ def login():
             conn.commit()
             conn.close()
             
-            mqtt_app.add_audit_log("AUTH", f"Successful login from {request.remote_addr}", user_data[1])
-            return redirect(url_for('control'))
+            mqtt_app.add_audit_log("AUTH", 
+                f"Successful login from {request.remote_addr}", 
+                user_data[1],
+                user_id=user_data[0])
+                
+            return redirect(url_for('index'))
         else:
             mqtt_app.add_audit_log("AUTH_FAIL", 
-                f"Failed login attempt for {username} from {request.remote_addr}", 
-                "AUTH"
-            )
+                f"Failed login attempt for {identifier} from {request.remote_addr}", 
+                "AUTH",
+                user_id=None)
             flash('Invalid credentials')
     return render_template('login.html')
 
@@ -647,10 +733,12 @@ def enable_mfa():
                 c.execute("UPDATE users SET totp_secret = ? WHERE id = ?",
                          (current_user.totp_secret, current_user.id))
                 conn.commit()
+                # After updating the database
+                mqtt_app.add_audit_log("USER", "MFA enabled", current_user.username, user_id=current_user.id)
             except sqlite3.Error as e:
                 conn.rollback()
                 flash('Error saving MFA configuration')
-                return redirect(url_for('control'))
+                return redirect(url_for('index'))
             finally:
                 conn.close()
             
@@ -674,7 +762,7 @@ def enable_mfa():
             img.save(qr_path)
         except Exception as e:
             flash('Error generating QR code')
-            return redirect(url_for('control'))
+            return redirect(url_for('index'))
 
         # Force session update before rendering template
         session.modified = True
@@ -683,7 +771,7 @@ def enable_mfa():
     except Exception as e:
         app.logger.error(f'MFA Setup Error: {str(e)}')
         flash('An error occurred during MFA setup')
-        return redirect(url_for('control'))
+        return redirect(url_for('index'))
 
 # Verify MFA Setup
 @app.route('/verify-mfa', methods=['POST'])
@@ -701,6 +789,8 @@ def verify_mfa():
         if not current_user.verify_totp(code):
             flash('Invalid verification code')
             return redirect(url_for('enable_mfa'))
+
+        mqtt_app.add_audit_log("AUTH", "MFA verification successful", current_user.username, user_id=current_user.id)
 
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -720,7 +810,7 @@ def verify_mfa():
 
         return render_template('backup_codes.html', codes=backup_codes)
     except Exception as e:
-        flash('Error processing MFA setup')
+        flash(f'Error processing MFA setup : {e}')
         return redirect(url_for('enable_mfa'))
 
 # MFA Login Verification
@@ -738,7 +828,7 @@ def verify_login():
         if user.verify_totp(code) or user.check_backup_code(code):
             login_user(user)
             session.pop('mfa_pending_user')
-            return redirect(url_for('control'))
+            return redirect(url_for('index'))
         
         flash('Invalid code')
     return render_template('verify_mfa.html')
@@ -775,8 +865,8 @@ def recovery():
             if user.check_backup_code(code):
                 login_user(user)
                 session.pop('mfa_pending_user', None)
-                mqtt_app.add_audit_log("AUTH", "Backup code used", user.username)
-                return redirect(url_for('control'))
+                mqtt_app.add_audit_log("AUTH", "Backup code used", user.username, user_id=user.id)
+                return redirect(url_for('index'))
             
         flash('Invalid backup code')
         return redirect(url_for('recovery'))
@@ -787,25 +877,33 @@ def recovery():
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
+        first_name = request.form['first_name'].strip()
+        last_name = request.form['last_name'].strip()
+        email = request.form['email'].strip().lower()
         username = request.form['username'].strip()
-        if not re.match(r'^[a-zA-Z0-9_-]{3,20}$', username):
-            flash('Username must be 3-20 characters (letters, numbers, _-)')
-            return redirect(url_for('register'))
-        
+        sector = request.form['sector'].strip()
         password = request.form['password']
+        confirm_password = request.form['confirm_password']
         
+        # Validate all fields
         errors = []
-        if len(password) < 12:
-            errors.append("Password must be at least 12 characters")
-        if not re.search(r'[A-Z]', password):
-            errors.append("Password needs at least 1 uppercase letter")
-        if not re.search(r'[a-z]', password):
-            errors.append("Password needs at least 1 lowercase letter")
-        if not re.search(r'\d', password):
-            errors.append("Password needs at least 1 digit")
-        if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
-            errors.append("Password needs at least 1 special character")
-
+        if not re.match(r'^[a-zA-Z\s-]{2,30}$', first_name):
+            errors.append("Invalid first name (2-30 letters only)")
+        if not re.match(r'^[a-zA-Z\s-]{2,30}$', last_name):
+            errors.append("Invalid last name (2-30 letters only)")
+        if not re.match(r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$', email):
+            errors.append("Invalid email format")
+        if not re.match(r'^[a-zA-Z0-9_-]{3,20}$', username):
+            errors.append("Username must be 3-20 characters (letters, numbers, _-)")
+        if password != confirm_password:
+            errors.append("Passwords do not match")
+        
+        # Password validation
+        try:
+            validate_password(password)
+        except ValueError as e:
+            errors.append(str(e))
+        
         if errors:
             for error in errors:
                 flash(error)
@@ -816,29 +914,46 @@ def register():
         try:
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
-            c.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", 
-                     (username, password_hash, "operator"))
+            c.execute("""
+                INSERT INTO users 
+                (first_name, last_name, email, username, sector, password_hash, role) 
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (first_name, last_name, email, username, sector, password_hash, "viewer"))
             
             conn.commit()
 
-            # Verify insertion
-            c.execute("SELECT * FROM users WHERE username = ?", (username,))
-            user = c.fetchone()
-            print(f"★ Database User: {user}")  # Should show role='operator'   
-
-            # Create user object and log them in
-            user_obj = User(id=user[0], username=user[1], role=user[3])
-            login_user(user_obj)
-            print(f"★ Registered User: ID={user_obj.id}, Role={user_obj.role}")
+            # Get the new user's ID
+            c.execute("SELECT id FROM users WHERE username = ?", (username,))
+            new_user_id = c.fetchone()[0]
             
-            # Update audit logs
-            mqtt_app.add_audit_log("AUTH", f"New registration: {username}", "SYSTEM")
+            # Create user object and log them in
+            user_obj = User(
+                id=new_user_id,
+                username=username,
+                role="viewer",
+                first_name=first_name,
+                last_name=last_name,
+                email=email,
+                sector=sector
+            )
+            login_user(user_obj)
+            
+            # Audit log
+            mqtt_app.add_audit_log("AUTH", f"New registration: {email}", "SYSTEM", user_id=new_user_id)
             
             flash('Registration successful!')
-            return redirect(url_for('control'))  # Changed from login to control
+            return redirect(url_for('index'))
             
-        except sqlite3.IntegrityError:
-            flash('Username already exists')
+        except sqlite3.IntegrityError as e:
+            if "UNIQUE constraint failed: users.email" in str(e):
+                flash('Email already registered')
+            elif "UNIQUE constraint failed: users.username" in str(e):
+                flash('Username already taken')
+            else:
+                flash('Registration error')
+        except Exception as e:
+            app.logger.error(f'Registration error: {str(e)}')
+            flash('Registration error')
         finally:
             conn.close()
             
@@ -847,7 +962,10 @@ def register():
 @app.route('/logout')
 @login_required
 def logout():
+    username = current_user.username
+    user_id = current_user.id
     logout_user()
+    mqtt_app.add_audit_log("AUTH", "User logged out", username, user_id=user_id)
     return redirect(url_for('index'))
 
 @app.route('/admin')
@@ -857,9 +975,9 @@ def admin_panel():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     
-    # Get active users count and all user data in one query
+    # Updated query to include new fields
     c.execute('''
-        SELECT id, username, role, last_login 
+        SELECT id, username, role, last_login, first_name, last_name, email, sector 
         FROM users
         ORDER BY username
     ''')
@@ -868,7 +986,7 @@ def admin_panel():
     active_users = 0
     current_time = datetime.now().timestamp()
     
-    for row in c.fetchall():
+    for row in c.fetchall():    
         last_login = datetime.fromtimestamp(row[3]).strftime("%Y-%m-%d %H:%M") if row[3] else "Never"
         is_active = (current_time - row[3]) < 900 if row[3] else False
         
@@ -877,7 +995,11 @@ def admin_panel():
             "username": row[1],
             "role": row[2],
             "last_login": last_login,
-            "active": is_active
+            "active": is_active,
+            "first_name": row[4],
+            "last_name": row[5],
+            "email": row[6],
+            "sector": row[7]
         })
         
         if is_active:
@@ -885,21 +1007,54 @@ def admin_panel():
     
     conn.close()
 
-    # Format audit logs
+    # Fetch logs from database
     formatted_logs = []
-    for log in mqtt_app.audit_logs[-50:]:
-        formatted = log.copy()
-        formatted["timestamp"] = datetime.strptime(
-            log["timestamp"], "%Y-%m-%d %H:%M:%S"
-        ).strftime("%H:%M:%S")
-        formatted_logs.append(formatted)
+    try:
+        conn = sqlite3.connect(mqtt_app.audit_db_path)
+        c = conn.cursor()
+        c.execute('''
+            SELECT timestamp, event_type, details, source 
+            FROM audit_logs 
+            ORDER BY timestamp DESC 
+            LIMIT 50
+        ''')
+        db_logs = c.fetchall()
+        
+        for log in db_logs:
+            formatted = {
+                "timestamp": datetime.strptime(log[0], "%Y-%m-%d %H:%M:%S").strftime("%H:%M:%S"),
+                "event_type": log[1],
+                "details": log[2],
+                "source": log[3]
+            }
+            formatted_logs.append(formatted)
+    except Exception as e:
+        print(f"Error fetching logs: {str(e)}")
+        formatted_logs = []
+    finally:
+        conn.close()
+    
+    # Get security event count
+    try:
+        conn = sqlite3.connect(mqtt_app.audit_db_path)
+        c = conn.cursor()
+        c.execute('''
+            SELECT COUNT(*) FROM audit_logs 
+            WHERE event_type IN ('SECURITY','AUTH_FAIL','AUTHORIZATION','VALIDATION')
+        ''')
+        security_events = c.fetchone()[0]
+    except:
+        security_events = 0
+    finally:
+        conn.close()
     
     return render_template('admin.html',
                          devices=mqtt_app.get_devices(),
                          active_users=active_users,
                          logs=formatted_logs,
-                         all_users=users,  # Pass full user list to template
-                         roles=["viewer", "operator", "admin"])  # Pass valid roles
+                         security_events=security_events,
+                         all_users=users,
+                         roles=VALID_ROLES)
 
 @app.route('/admin/update_role', methods=['POST'])
 @admin_required
@@ -919,8 +1074,49 @@ def update_user_role():
         ''', (new_role, target_user))
         conn.commit()
         flash(f'Updated {target_user} role to {new_role}')
+        mqtt_app.add_audit_log("ADMIN", 
+            f"Updated {target_user} role to {new_role}", 
+            current_user.username,
+            user_id=current_user.id
+        )
     except sqlite3.Error as e:
         flash(f'Error updating role: {str(e)}')
+    finally:
+        conn.close()
+    
+    return redirect(url_for('admin_panel'))
+
+@app.route('/admin/verify_logs')
+@admin_required
+def verify_logs():
+    """Verify integrity of audit logs"""
+    invalid_logs = []
+    try:
+        conn = sqlite3.connect(mqtt_app.audit_db_path)
+        c = conn.cursor()
+        c.execute("SELECT id, timestamp, event_type, details, source, user_id, log_hash FROM audit_logs")
+        
+        for log in c.fetchall():
+            log_id, timestamp, event_type, details, source, user_id, stored_hash = log
+            log_data = f"{timestamp}|{event_type}|{details}|{source}|{user_id}"
+            computed_hash = hashlib.sha256(log_data.encode('utf-8')).hexdigest()
+            
+            if computed_hash != stored_hash:
+                invalid_logs.append({
+                    "id": log_id,
+                    "timestamp": timestamp,
+                    "computed_hash": computed_hash,
+                    "stored_hash": stored_hash
+                })
+        
+        if invalid_logs:
+            flash(f"Found {len(invalid_logs)} tampered log entries!", "error")
+            # In real system, trigger security alerts here
+        else:
+            flash("All log entries verified - no tampering detected", "success")
+            
+    except Exception as e:
+        flash(f"Verification failed: {str(e)}", "error")
     finally:
         conn.close()
     
@@ -939,7 +1135,8 @@ def send_command():
     if not re.match(r'^device_\d{3}$', device_id):
         mqtt_app.add_audit_log("VALIDATION", 
             f"Invalid device ID format: {device_id}", 
-            request.remote_addr)
+            request.remote_addr,
+            user_id=current_user.id if current_user.is_authenticated else None)
         return jsonify({"status": "error", "message": "Invalid device ID format"}), 400
     
     # ===== NEW COMMAND VALIDATION =====
@@ -948,7 +1145,8 @@ def send_command():
     if not device_info:
         mqtt_app.add_audit_log("VALIDATION",
             f"Unknown device: {device_id}",
-            current_user.username if current_user.is_authenticated else "ANONYMOUS")
+            current_user.username if current_user.is_authenticated else "ANONYMOUS",
+            user_id=current_user.id if current_user.is_authenticated else None)
         return jsonify({"status": "error", "message": "Device not registered"}), 404
 
     # Validate command against device type
@@ -958,7 +1156,8 @@ def send_command():
     if command not in allowed:
         mqtt_app.add_audit_log("VALIDATION",
             f"Invalid command '{command}' for {device_id} ({device_type})",
-            current_user.username if current_user.is_authenticated else "ANONYMOUS")
+            current_user.username if current_user.is_authenticated else "ANONYMOUS",
+            user_id=current_user.id if current_user.is_authenticated else None)
         return jsonify({"status": "error", "message": "Command not allowed for this device type"}), 400
     # ===== END OF VALIDATION =====
 
@@ -970,7 +1169,8 @@ def send_command():
     if command in RESTRICTED_COMMANDS and current_user.role != "admin":
         mqtt_app.add_audit_log("AUTHORIZATION",
             f"Unauthorized attempt to send restricted command '{command}' to {device_id}",
-            current_user.username)
+            current_user.username,
+            user_id=current_user.id)
         return jsonify({
             "status": "error",
             "message": "Admin privileges required for this command"
@@ -980,7 +1180,8 @@ def send_command():
     if current_user.role == "viewer":
         mqtt_app.add_audit_log("AUTHORIZATION",
             f"Viewer role attempted command '{command}' on {device_id}",
-            current_user.username)
+            current_user.username,
+            user_id=current_user.id)
         return jsonify({
             "status": "error",
             "message": "Read-only accounts cannot send commands"
@@ -1007,7 +1208,8 @@ def send_replay_command():
         if not re.match(r'^device_\d{3}$', device_id):
             mqtt_app.add_audit_log("VALIDATION", 
                 f"Invalid device ID format: {device_id}", 
-                request.remote_addr)
+                request.remote_addr,
+                user_id=current_user.id)
             return jsonify({"status": "error", "message": "Invalid device ID format"}), 400
         
         success = mqtt_app.send_command_with_timestamp(device_id, command, timestamp)
@@ -1028,7 +1230,7 @@ def get_status():
     return jsonify({
         "mqtt_connected": mqtt_app.get_connection_status(),
         "device_count": len(mqtt_app.get_devices()),
-        "timestamp": time.time()  # Add for debugging
+        "timestamp": time.time()  
     })
     
 # Start the application

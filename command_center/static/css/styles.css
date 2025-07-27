@@ -108,7 +108,8 @@ body {
 /* Form Styles */
 input[type="text"], 
 input[type="password"], 
-input[type="number"], 
+input[type="number"],
+input[type="email"],
 select {
     width: 100%;
     padding: 10px;
@@ -120,7 +121,8 @@ select {
 
 input[type="text"]:focus, 
 input[type="password"]:focus, 
-input[type="number"]:focus, 
+input[type="number"]:focus,
+input[type="email"]:focus,
 select:focus {
     outline: none;
     border-color: #007bff;
@@ -709,3 +711,19 @@ a:hover {
     margin-top: 15px;
 }
 
+.form-row {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 15px;
+}
+
+.form-row .form-group {
+    flex: 1;
+}
+
+@media (max-width: 600px) {
+    .form-row {
+        flex-direction: column;
+        gap: 10px;
+    }
+}
